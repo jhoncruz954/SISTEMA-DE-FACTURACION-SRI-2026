@@ -1,0 +1,268 @@
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
+import { ChevronDown, Search } from 'lucide-react';
+
+export interface SelectProps {
+  value?: string | number;
+  onChange?: (e: { target: { value: string } }) => void;
+  children?: React.ReactNode;
+  className?: string;
+  disabled?: boolean;
+  required?: boolean;
+  searchable?: boolean;
+}
+
+export const Select: React.FC<SelectProps> = (props) => {
+  const { value, onChange, children, className = '', disabled, required, searchable = true } = props;
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const updatePosition = useCallback(() => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const dropdownWidth = Math.max(rect.width, 240);
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const openUpwards = spaceBelow < 220 && spaceAbove > spaceBelow;
+
+      let calculatedLeft = rect.left;
+      if (calculatedLeft + dropdownWidth > window.innerWidth - 12) {
+        calculatedLeft = Math.max(12, window.innerWidth - dropdownWidth - 12);
+      }
+
+      setDropdownPos({
+        top: openUpwards ? Math.max(10, rect.top - 230) : rect.bottom + 6,
+        left: Math.max(12, calculatedLeft),
+        width: dropdownWidth,
+      });
+    }
+  }, []);
+
+  const handleToggle = () => {
+    if (disabled) return;
+    if (!isOpen) {
+      updatePosition();
+      setIsOpen(true);
+    } else {
+      setIsOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        dropdownRef.current && !dropdownRef.current.contains(target)
+      ) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSearchQuery('');
+      updatePosition();
+      if (searchable && searchInputRef.current) {
+        setTimeout(() => {
+          searchInputRef.current?.focus();
+        }, 50);
+      }
+    }
+  }, [isOpen, searchable, updatePosition]);
+
+  // Recalculate position on scroll/resize while open
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleReposition = () => updatePosition();
+    window.addEventListener('scroll', handleReposition, true);
+    window.addEventListener('resize', handleReposition);
+    return () => {
+      window.removeEventListener('scroll', handleReposition, true);
+      window.removeEventListener('resize', handleReposition);
+    };
+  }, [isOpen, updatePosition]);
+
+  const options: { value: string; label: React.ReactNode }[] = [];
+
+  const extractOption = (element: React.ReactElement<any>) => {
+    const val = element.props.value !== undefined ? String(element.props.value) : String(element.props.children ?? '');
+    options.push({
+      value: val,
+      label: element.props.children,
+    });
+  };
+
+  const processChild = (child: any) => {
+    if (!child || !React.isValidElement(child)) return;
+    const typeStr = typeof child.type === 'string' ? child.type.toLowerCase() : '';
+    if (typeStr === 'option' || child.type === 'option') {
+      extractOption(child as React.ReactElement<any>);
+    } else if (child.type === React.Fragment && (child.props as any)?.children) {
+      React.Children.toArray((child.props as any).children).forEach(processChild);
+    } else if ((child.props as any)?.value !== undefined && (child.props as any)?.children !== undefined) {
+      extractOption(child as React.ReactElement<any>);
+    }
+  };
+
+  React.Children.toArray(children).forEach(processChild);
+
+  const selectedOption = options.find((opt) => String(opt.value) === String(value));
+  const displayLabel = selectedOption ? selectedOption.label : '-- Seleccionar --';
+
+  const getTextContent = (node: any): string => {
+    if (node === null || node === undefined) return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(getTextContent).join(' ');
+    if (React.isValidElement(node) && (node.props as any).children) {
+      return getTextContent((node.props as any).children);
+    }
+    return '';
+  };
+
+  const filteredOptions = options.filter(opt => {
+    if (!searchable || !searchQuery) return true;
+    const query = searchQuery.toLowerCase().trim();
+    const optLabel = getTextContent(opt.label).toLowerCase();
+    const optValue = String(opt.value).toLowerCase();
+    return optLabel.includes(query) || optValue.includes(query);
+  });
+
+  const handleSelect = (val: string) => {
+    if (onChange) {
+      onChange({ target: { value: val } });
+    }
+    setIsOpen(false);
+  };
+
+  const isDark =
+    className.includes('bg-slate-8') ||
+    className.includes('bg-slate-9') ||
+    className.includes('bg-gray-8') ||
+    className.includes('bg-gray-9') ||
+    className.includes('bg-zinc-8') ||
+    className.includes('bg-zinc-9') ||
+    className.includes('text-white') ||
+    className.includes('text-slate-100') ||
+    className.includes('text-slate-200');
+
+  const baseBgClass = className.includes('bg-') ? '' : 'bg-slate-50';
+  const baseBorderClass = className.includes('border-') ? '' : 'border-slate-200 hover:border-slate-300';
+
+  const dropdown = isOpen && dropdownPos ? ReactDOM.createPortal(
+    <div
+      ref={dropdownRef}
+      style={{
+        position: 'fixed',
+        top: dropdownPos.top,
+        left: dropdownPos.left,
+        width: dropdownPos.width,
+        zIndex: 10000005,
+      }}
+      className={`${
+        isDark 
+          ? 'bg-slate-950 border border-slate-800 text-slate-200' 
+          : 'bg-white border border-slate-200/90 text-slate-800 ring-1 ring-slate-900/10'
+      } rounded-2xl shadow-2xl overflow-hidden animate-fadeIn`}
+    >
+      {searchable !== false && (
+        <div className={`p-2 border-b ${isDark ? 'border-slate-800 bg-slate-900/60' : 'border-slate-100 bg-slate-50/80'}`}>
+          <div className="relative">
+            <Search className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder={`Escriba para filtrar ${options.length} opciones...`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              className={`w-full pl-8 pr-2.5 py-1.5 ${
+                isDark 
+                  ? 'bg-slate-900 text-slate-200 placeholder-slate-500 border-slate-700/80' 
+                  : 'bg-white text-slate-900 placeholder-slate-400 border-slate-200 focus:bg-white'
+              } border rounded-xl text-xs font-medium focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-all`}
+            />
+          </div>
+        </div>
+      )}
+      <div className="max-h-52 overflow-y-auto custom-scrollbar flex flex-col p-1 space-y-0.5">
+        {filteredOptions.length > 0 ? (
+          filteredOptions.map((option, idx) => {
+            const isSelected = String(value) === String(option.value);
+            return (
+              <div
+                key={idx}
+                onClick={() => handleSelect(String(option.value))}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center justify-between ${
+                  isSelected
+                    ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black shadow-md shadow-orange-500/20'
+                    : isDark
+                    ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    : 'text-slate-700 hover:bg-orange-50/80 hover:text-orange-950'
+                }`}
+              >
+                <span className="truncate">{option.label}</span>
+              </div>
+            );
+          })
+        ) : (
+          <div className="px-3 py-3 text-slate-400 text-xs font-medium text-center">
+            No se encontraron resultados
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <div className="relative w-full text-xs">
+      <div
+        ref={triggerRef}
+        className={`w-full px-3 py-2 ${baseBgClass} border rounded-xl font-medium text-xs flex items-center justify-between cursor-pointer transition-all ${
+          isOpen ? 'ring-2 ring-orange-500 border-orange-500 shadow-2xs' : baseBorderClass
+        } ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}
+        onClick={handleToggle}
+      >
+        {/* Hidden select for native form validation */}
+        <select
+          className="absolute opacity-0 w-0 h-0 pointer-events-none"
+          value={value}
+          onChange={() => {}}
+          required={required}
+          disabled={disabled}
+          tabIndex={-1}
+        >
+          {options.map((opt, i) => (
+            <option key={i} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <span
+          className={`truncate mr-2 ${
+            selectedOption && selectedOption.value !== ''
+              ? isDark
+                ? 'text-white font-bold'
+                : 'text-slate-900 font-bold'
+              : isDark
+              ? 'text-slate-400 font-medium'
+              : 'text-slate-500 font-medium'
+          }`}
+        >
+          {displayLabel}
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 text-orange-500 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </div>
+
+      {dropdown}
+    </div>
+  );
+};

@@ -1,0 +1,3094 @@
+import { Select } from '../Shared/Select';
+import React, { useState, useEffect, useRef } from 'react';
+import { useModal } from '../../context/ModalContext';
+import { useFirestoreSync } from '../../hooks/useFirestoreSync';
+import { defaultUsersList, defaultPaymentMethods, defaultTaxRates } from '../../data/initialData';
+import { 
+  SettingsSubTab, 
+  StoreSettings,
+  TaxRateItem 
+} from '../../types';
+import { 
+  Building2, 
+  MapPin, 
+  Receipt, 
+  CreditCard, 
+  Users, 
+  Printer, 
+  ShieldCheck, 
+  Database, 
+  Save, 
+  Plus, 
+  CheckCircle2, 
+  FileText, 
+  Server, 
+  Key, 
+  DollarSign, 
+  Percent, 
+  Sliders, 
+  Download, 
+  Upload, 
+  RefreshCw, 
+  Trash2, 
+  Edit3, 
+  QrCode, 
+  Lock, 
+  ToggleLeft, 
+  ToggleRight,
+  AlertTriangle,
+  UserPlus,
+  ImageIcon,
+  Sparkles,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  FileCode,
+  ExternalLink,
+  Tag,
+  Star,
+  CheckCircle,
+  X,
+  User,
+  Mail,
+  Shield,
+  AlertCircle
+} from 'lucide-react';
+
+import { SriBackendService } from '../../services/sriBackendService';
+import { generateInvoiceXML, convertERPInvoiceToSRI, downloadXML } from '../../services/sriXmlService';
+import { validateEcuadorianDocument } from '../../utils/ecuadorianValidator';
+import { UserPermissionsModal } from './UserPermissionsModal';
+import { RoleModal } from './RoleModal';
+
+import { exportDatabaseBackup, inspectBackupFile, restoreDatabaseBackup, BackupPayload } from '../../services/backupService';
+import { MongoConnectorCard } from './MongoConnectorCard';
+import { ROLE_PRESETS, ALL_PERMISSIONS, SystemRole, DEFAULT_SYSTEM_ROLES } from '../../types/permissions';
+
+interface SettingsManagerProps {
+  subTab: SettingsSubTab | 'SETTINGS';
+  settings: StoreSettings;
+  onSaveSettings: (newSettings: StoreSettings) => void;
+  onClearAllData?: () => void;
+  usersList?: any[];
+  setUsersList?: (users: any[] | ((prev: any[]) => any[])) => void;
+  rolesList?: SystemRole[];
+  setRolesList?: (roles: SystemRole[] | ((prev: SystemRole[]) => SystemRole[])) => void;
+  currentUser?: any;
+  setCurrentUser?: (user: any) => void;
+}
+
+export const SettingsManager: React.FC<SettingsManagerProps> = ({
+  subTab,
+  settings,
+  onSaveSettings,
+  onClearAllData,
+  usersList: propUsersList,
+  setUsersList: propSetUsersList,
+  rolesList: propRolesList,
+  setRolesList: propSetRolesList,
+  currentUser,
+  setCurrentUser,
+}) => {
+  const { showAlert, showConfirm, showToast } = useModal();
+  const [formData, setFormData] = useState<StoreSettings>({ ...settings });
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  // Sync when settings prop updates
+  useEffect(() => {
+    setFormData({ ...settings });
+  }, [settings]);
+
+  // Digital Signature (.p12 / Base64) State
+  const [signatureBase64, setSignatureBase64] = useFirestoreSync<string>('ferreteria_settings_p12_base64', '');
+  const [signatureFileName, setSignatureFileName] = useFirestoreSync<string>('ferreteria_settings_p12_filename', '');
+  const [signatureFileSize, setSignatureFileSize] = useFirestoreSync<string>('ferreteria_settings_p12_filesize', '');
+  const [signaturePassword, setSignaturePassword] = useFirestoreSync<string>('ferreteria_settings_p12_password', '');
+  const [signatureUploadDate, setSignatureUploadDate] = useFirestoreSync<string>('ferreteria_settings_p12_upload_date', '');
+  const [showSignaturePassword, setShowSignaturePassword] = useState(false);
+  const [copiedBase64, setCopiedBase64] = useState(false);
+
+  // Java Backend API URL State
+  const [sriApiUrl, setSriApiUrl] = useFirestoreSync<string>('ferreteria_settings_sri_api_url', 'http://localhost:8080/api/sri');
+  const [isTestingBackend, setIsTestingBackend] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<{ tested: boolean; ok: boolean; message: string }>({
+    tested: false,
+    ok: false,
+    message: '',
+  });
+
+  // Additional Configuration State Mock Data
+  const [sriMode, setSriMode] = useFirestoreSync<'PRUEBAS' | 'PRODUCCION'>('ferreteria_settings_sri_mode', 'PRUEBAS');
+  const [establishment, setEstablishment] = useFirestoreSync<string>('ferreteria_settings_establishment', '001');
+  const [emissionPoint, setEmissionPoint] = useFirestoreSync<string>('ferreteria_settings_emission_point', '001');
+  const [secInvoice, setSecInvoice] = useFirestoreSync<string>('ferreteria_settings_sec_invoice', '000000001');
+  const [secBoleta, setSecBoleta] = useFirestoreSync<string>('ferreteria_settings_sec_boleta', '000001');
+  const [secQuote, setSecQuote] = useFirestoreSync<string>('ferreteria_settings_sec_quote', '000001');
+  const [secCreditNote, setSecCreditNote] = useFirestoreSync<string>('ferreteria_settings_sec_credit_note', '000000001');
+  const [secRetention, setSecRetention] = useFirestoreSync<string>('ferreteria_settings_sec_retention', '000000001');
+
+  // Tax Rates (IVAs) Management State
+  const [taxRates, setTaxRates] = useFirestoreSync<TaxRateItem[]>('ferreteria_settings_tax_rates', defaultTaxRates);
+  const [showTaxModal, setShowTaxModal] = useState(false);
+  const [editingTax, setEditingTax] = useState<TaxRateItem | null>(null);
+  const [taxForm, setTaxForm] = useState<{
+    name: string;
+    rate: number;
+    codeSri: string;
+    isDefault: boolean;
+    active: boolean;
+    description: string;
+  }>({
+    name: '',
+    rate: 15,
+    codeSri: '4',
+    isDefault: false,
+    active: true,
+    description: '',
+  });
+
+  // Users & Roles Management State
+  const [internalUsersList, setInternalUsersList] = useFirestoreSync<any[]>('ferreteria_settings_users_list', defaultUsersList);
+  const usersList = propUsersList || internalUsersList;
+  const setUsersList = propSetUsersList || setInternalUsersList;
+
+  const [internalRolesList, setInternalRolesList] = useFirestoreSync<SystemRole[]>('ferreteria_settings_roles', DEFAULT_SYSTEM_ROLES);
+  const rolesList = propRolesList || internalRolesList;
+  const setRolesList = propSetRolesList || setInternalRolesList;
+
+  const [userSubTab, setUserSubTab] = useState<'users' | 'roles'>('users');
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [editingRole, setEditingRole] = useState<SystemRole | null>(null);
+
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [showNewUserPassword, setShowNewUserPassword] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [newUser, setNewUser] = useState({ name: '', email: '', username: '', role: 'Vendedor', password: '' });
+  const [userForPermissions, setUserForPermissions] = useState<any | null>(null);
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false);
+
+  // Payment Methods State
+  const [paymentMethods, setPaymentMethods] = useFirestoreSync<any[]>('ferreteria_settings_payment_methods', defaultPaymentMethods);
+  const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
+  const [editingPaymentMethod, setEditingPaymentMethod] = useState<any | null>(null);
+  const [paymentMethodForm, setPaymentMethodForm] = useState({
+    code: '20',
+    name: '',
+    shortName: '',
+    active: true,
+    default: false
+  });
+
+  // Printing Format State
+  const [printFormat, setPrintFormat] = useFirestoreSync<'TICKET_80MM' | 'TICKET_58MM' | 'RIDE_A4'>('ferreteria_settings_print_format', 'TICKET_80MM');
+  const [includeQrCode, setIncludeQrCode] = useFirestoreSync<boolean>('ferreteria_settings_include_qr', true);
+  const [printLogo, setPrintLogo] = useFirestoreSync<boolean>('ferreteria_settings_print_logo', true);
+
+  // General Admin Settings
+  const [allowNegativeStock, setAllowNegativeStock] = useFirestoreSync<boolean>('ferreteria_settings_allow_negative_stock', false);
+  const [blockNoStockSales, setBlockNoStockSales] = useFirestoreSync<boolean>('ferreteria_settings_block_no_stock_sales', true);
+  const [minStockAlert, setMinStockAlert] = useFirestoreSync<boolean>('ferreteria_settings_min_stock_alert', true);
+  const [autoSessionTimeout, setAutoSessionTimeout] = useFirestoreSync<string>('ferreteria_settings_auto_session_timeout', '30');
+
+  // Backup & Restore State
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+  const [pendingBackupData, setPendingBackupData] = useState<BackupPayload | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Export Backup
+  const handleExportBackupNow = async () => {
+    setIsExportingBackup(true);
+    try {
+      const result = await exportDatabaseBackup(settings);
+      showToast(`Copia de seguridad descargada exitosamente (${result.fileName})`, 'success');
+    } catch (err: any) {
+      console.error('Error exporting backup:', err);
+      showAlert(`Error al generar la copia de seguridad: ${err.message || err}`, 'Error de Respaldo', 'warning');
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
+
+  // Select file to restore
+  const handleFileSelectForRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    try {
+      const backupPayload = await inspectBackupFile(file);
+      setPendingBackupData(backupPayload);
+      setShowRestoreModal(true);
+    } catch (err: any) {
+      console.error('Error inspecting backup file:', err);
+      showAlert(`El archivo seleccionado no es válido: ${err.message || err}`, 'Archivo Inválido', 'warning');
+    }
+  };
+
+  // Execute restore
+  const handleExecuteRestore = async () => {
+    if (!pendingBackupData) return;
+    setIsRestoringBackup(true);
+    try {
+      const result = await restoreDatabaseBackup(pendingBackupData);
+      setShowRestoreModal(false);
+      showToast(`Se restauraron ${result.restoredCount} colecciones con éxito. Recargando sistema...`, 'success');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (err: any) {
+      console.error('Error restoring backup:', err);
+      showAlert(`Error al restaurar los datos: ${err.message || err}`, 'Error de Restauración', 'warning');
+      setIsRestoringBackup(false);
+    }
+  };
+
+  // Tax Management Handlers
+  const handleOpenAddTax = () => {
+    setEditingTax(null);
+    setTaxForm({
+      name: '',
+      rate: 15,
+      codeSri: '4',
+      isDefault: false,
+      active: true,
+      description: '',
+    });
+    setShowTaxModal(true);
+  };
+
+  const handleOpenEditTax = (tax: TaxRateItem) => {
+    setEditingTax(tax);
+    setTaxForm({
+      name: tax.name,
+      rate: tax.rate,
+      codeSri: tax.codeSri || '4',
+      isDefault: !!tax.isDefault,
+      active: tax.active !== false,
+      description: tax.description || '',
+    });
+    setShowTaxModal(true);
+  };
+
+  const handleSaveTax = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!taxForm.name.trim()) {
+      showAlert('Por favor ingrese un nombre para la tarifa de IVA.', 'Campo Requerido', 'warning');
+      return;
+    }
+
+    const rateNumber = parseFloat(String(taxForm.rate));
+    if (isNaN(rateNumber) || rateNumber < 0) {
+      showAlert('El porcentaje de IVA debe ser un número válido igual o mayor a 0.', 'Valor Inválido', 'warning');
+      return;
+    }
+
+    let updated: TaxRateItem[];
+    if (editingTax) {
+      updated = taxRates.map((t) =>
+        t.id === editingTax.id
+          ? {
+              ...t,
+              name: taxForm.name.trim(),
+              rate: rateNumber,
+              codeSri: taxForm.codeSri,
+              isDefault: taxForm.isDefault,
+              active: taxForm.active,
+              description: taxForm.description.trim(),
+            }
+          : taxForm.isDefault
+          ? { ...t, isDefault: false }
+          : t
+      );
+    } else {
+      const newTax: TaxRateItem = {
+        id: `tax-${Date.now()}`,
+        name: taxForm.name.trim(),
+        rate: rateNumber,
+        codeSri: taxForm.codeSri,
+        isDefault: taxForm.isDefault,
+        active: taxForm.active,
+        description: taxForm.description.trim(),
+      };
+      if (taxForm.isDefault) {
+        updated = taxRates.map((t) => ({ ...t, isDefault: false }));
+        updated.push(newTax);
+      } else {
+        updated = [...taxRates, newTax];
+      }
+    }
+
+    if (taxForm.isDefault) {
+      const updatedSettings = { ...formData, defaultTaxRate: rateNumber };
+      setFormData(updatedSettings);
+      onSaveSettings(updatedSettings);
+    }
+
+    setTaxRates(updated);
+    setShowTaxModal(false);
+    showToast(editingTax ? 'Tarifa de IVA actualizada correctamente.' : 'Nueva tarifa de IVA agregada exitosamente.', 'success');
+  };
+
+  const handleDeleteTax = (tax: TaxRateItem) => {
+    if (tax.isDefault) {
+      showAlert('No puede eliminar la tarifa de IVA establecida por defecto. Primero establezca otra como predeterminada.', 'Operación No Permitida', 'warning');
+      return;
+    }
+    showConfirm(
+      `¿Está seguro de eliminar la tarifa "${tax.name}" (${tax.rate}%)?`,
+      () => {
+        const filtered = taxRates.filter((t) => t.id !== tax.id);
+        setTaxRates(filtered);
+        showToast(`Tarifa "${tax.name}" eliminada correctamente.`, 'info');
+      },
+      'Eliminar Tarifa de IVA'
+    );
+  };
+
+  const handleSetDefaultTax = (tax: TaxRateItem) => {
+    const updated = taxRates.map((t) => ({
+      ...t,
+      isDefault: t.id === tax.id,
+    }));
+    setTaxRates(updated);
+    const updatedSettings = { ...formData, defaultTaxRate: tax.rate };
+    setFormData(updatedSettings);
+    onSaveSettings(updatedSettings);
+    showToast(`"${tax.name}" establecida como tarifa predeterminada (${tax.rate}%).`, 'success');
+  };
+
+  const handleToggleActiveTax = (tax: TaxRateItem) => {
+    if (tax.isDefault && tax.active) {
+      showAlert('No puede desactivar la tarifa establecida por defecto.', 'Operación No Permitida', 'warning');
+      return;
+    }
+    const updated = taxRates.map((t) =>
+      t.id === tax.id ? { ...t, active: !t.active } : t
+    );
+    setTaxRates(updated);
+    showToast(`Tarifa "${tax.name}" ${tax.active ? 'desactivada' : 'activada'}.`, 'info');
+  };
+
+  // Payment Methods Handlers
+  const handleTogglePaymentMethod = (id: string) => {
+    const target = paymentMethods.find((pm) => pm.id === id);
+    if (target?.default && target.active) {
+      showAlert('No puede desactivar la forma de pago establecida por defecto. Primero establezca otra como predeterminada.', 'Forma de Pago Predeterminada', 'warning');
+      return;
+    }
+    const updated = paymentMethods.map((pm) =>
+      pm.id === id ? { ...pm, active: !pm.active } : pm
+    );
+    setPaymentMethods(updated);
+    const updatedTarget = updated.find((pm) => pm.id === id);
+    showToast(`Forma de pago "${updatedTarget?.shortName || updatedTarget?.name}" ${updatedTarget?.active ? 'habilitada' : 'deshabilitada'} para facturación.`, 'info');
+  };
+
+  const handleSetDefaultPaymentMethod = (id: string) => {
+    const updated = paymentMethods.map((pm) => ({
+      ...pm,
+      active: pm.id === id ? true : pm.active,
+      default: pm.id === id,
+    }));
+    setPaymentMethods(updated);
+    const target = updated.find((pm) => pm.id === id);
+    showToast(`"${target?.shortName || target?.name}" establecida como forma de pago predeterminada en caja.`, 'success');
+  };
+
+  const handleOpenAddPaymentMethod = () => {
+    setEditingPaymentMethod(null);
+    setPaymentMethodForm({
+      code: '20',
+      name: '',
+      shortName: '',
+      active: true,
+      default: false,
+    });
+    setShowPaymentMethodModal(true);
+  };
+
+  const handleOpenEditPaymentMethod = (pm: any) => {
+    setEditingPaymentMethod(pm);
+    setPaymentMethodForm({
+      code: pm.code || '20',
+      name: pm.name || '',
+      shortName: pm.shortName || '',
+      active: pm.active !== false,
+      default: !!pm.default,
+    });
+    setShowPaymentMethodModal(true);
+  };
+
+  const handleSavePaymentMethodForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentMethodForm.name.trim()) {
+      showAlert('Por favor ingrese el nombre de la forma de pago.', 'Campo Requerido', 'warning');
+      return;
+    }
+
+    let updated: any[];
+    if (editingPaymentMethod) {
+      updated = paymentMethods.map((pm) =>
+        pm.id === editingPaymentMethod.id
+          ? {
+              ...pm,
+              code: paymentMethodForm.code,
+              name: paymentMethodForm.name.trim(),
+              shortName: paymentMethodForm.shortName.trim() || paymentMethodForm.name.trim(),
+              active: paymentMethodForm.active,
+              default: paymentMethodForm.default,
+            }
+          : paymentMethodForm.default
+          ? { ...pm, default: false }
+          : pm
+      );
+    } else {
+      const newPm = {
+        id: `pm-${Date.now()}`,
+        code: paymentMethodForm.code,
+        name: paymentMethodForm.name.trim(),
+        shortName: paymentMethodForm.shortName.trim() || paymentMethodForm.name.trim(),
+        active: paymentMethodForm.active,
+        default: paymentMethodForm.default,
+      };
+      if (paymentMethodForm.default) {
+        updated = paymentMethods.map((pm) => ({ ...pm, default: false }));
+        updated.push(newPm);
+      } else {
+        updated = [...paymentMethods, newPm];
+      }
+    }
+
+    setPaymentMethods(updated);
+    setShowPaymentMethodModal(false);
+    showToast(editingPaymentMethod ? 'Forma de pago actualizada.' : 'Nueva forma de pago registrada.', 'success');
+  };
+
+  const handleDeletePaymentMethod = (pm: any) => {
+    if (pm.default) {
+      showAlert('No puede eliminar la forma de pago establecida por defecto.', 'Operación No Permitida', 'warning');
+      return;
+    }
+    showConfirm(
+      `¿Está seguro de eliminar la forma de pago "${pm.shortName || pm.name}"?`,
+      () => {
+        const filtered = paymentMethods.filter((p) => p.id !== pm.id);
+        setPaymentMethods(filtered);
+        showToast('Forma de pago eliminada.', 'info');
+      },
+      'Eliminar Forma de Pago'
+    );
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSaveSettings(formData);
+    setSavedSuccess(true);
+    showToast('Configuración guardada exitosamente', 'success');
+    setTimeout(() => setSavedSuccess(false), 3000);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showAlert('Por favor seleccione un archivo de imagen válido (PNG, JPG, SVG, WebP).', 'Formato Inválido', 'warning');
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      showAlert('El logo no debe superar los 2MB de tamaño.', 'Archivo muy pesado', 'warning');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      const updated = { ...formData, logoUrl: base64 };
+      setFormData(updated);
+      onSaveSettings(updated);
+      showToast('Logo empresarial cargado y guardado correctamente.', 'success');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = () => {
+    const updated = { ...formData, logoUrl: '' };
+    setFormData(updated);
+    onSaveSettings(updated);
+    showToast('Logo eliminado. Se utilizará el ícono predeterminado.', 'info');
+  };
+
+  const handleP12FileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (ext !== 'p12' && ext !== 'pfx') {
+      showAlert('Por favor seleccione un archivo con extensión .p12 o .pfx emitido por una entidad autorizada (Banco Central, Security Data, ANF, UANATACA, etc.).', 'Formato de Certificado Inválido', 'warning');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      showAlert('El archivo de firma es demasiado pesado (> 5MB).', 'Archivo Excedido', 'warning');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const cleanBase64 = result.includes(',') ? result.split(',')[1] : result;
+
+      setSignatureBase64(cleanBase64);
+      setSignatureFileName(file.name);
+      setSignatureFileSize(`${(file.size / 1024).toFixed(1)} KB`);
+      setSignatureUploadDate(new Date().toISOString());
+
+      try {
+        localStorage.setItem('ferreteria_settings_p12_base64', cleanBase64);
+        localStorage.setItem('ferreteria_settings_p12_filename', file.name);
+        localStorage.setItem('ferreteria_settings_p12_filesize', `${(file.size / 1024).toFixed(1)} KB`);
+      } catch (err) {}
+
+      showToast(`Certificado digital "${file.name}" cargado y convertido a Base64 exitosamente.`, 'success');
+    };
+    reader.onerror = () => {
+      showAlert('Ocurrió un error al leer el archivo .p12. Intente nuevamente.', 'Error de Lectura', 'error');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveSignature = () => {
+    showConfirm(
+      '¿Está seguro de eliminar el certificado digital actual? Deberá cargar un nuevo archivo .p12 para firmar facturas electrónicas del SRI.',
+      () => {
+        setSignatureBase64('');
+        setSignatureFileName('');
+        setSignatureFileSize('');
+        setSignaturePassword('');
+        setSignatureUploadDate('');
+        try {
+          localStorage.removeItem('ferreteria_settings_p12_base64');
+          localStorage.removeItem('ferreteria_settings_p12_filename');
+          localStorage.removeItem('ferreteria_settings_p12_password');
+        } catch (err) {}
+        showToast('Certificado digital eliminado.', 'info');
+      },
+      'Eliminar Firma Electrónica'
+    );
+  };
+
+  const handleCopyBase64 = () => {
+    if (!signatureBase64) return;
+    navigator.clipboard.writeText(signatureBase64);
+    setCopiedBase64(true);
+    showToast('Cadena Base64 copiada al portapapeles.', 'success');
+    setTimeout(() => setCopiedBase64(false), 2500);
+  };
+
+  const handleTestBackendConnection = async () => {
+    setIsTestingBackend(true);
+    SriBackendService.setBaseUrl(sriApiUrl || 'http://localhost:8080/api/sri');
+    const result = await SriBackendService.testConnection();
+    setIsTestingBackend(false);
+    setBackendStatus({ tested: true, ok: result.ok, message: result.message });
+    if (result.ok) {
+      showToast(result.message, 'success');
+    } else {
+      showAlert(result.message, 'Error de Conexión', 'error');
+    }
+  };
+
+  const handleDownloadSampleXml = () => {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const fechaEmision = `${day}/${month}/${year}`;
+
+    const sampleData = {
+      rucEmisor: formData.taxId || (formData as any).ruc || '1790012345001',
+      razonSocialEmisor: formData.legalName || formData.storeName || 'FERRETERÍA DAYNET',
+      nombreComercialEmisor: formData.storeName || 'FERRETERÍA DAYNET',
+      dirMatriz: formData.address || 'Quito, Ecuador',
+      estab: establishment || '001',
+      ptoEmi: emissionPoint || '001',
+      secuencial: (secInvoice || '1').padStart(9, '0'),
+      fechaEmision,
+      ambiente: sriMode === 'PRODUCCION' ? ('2' as const) : ('1' as const),
+      cliente: {
+        razonSocial: 'CONSUMIDOR FINAL',
+        identificacion: '9999999999999',
+        direccion: 'Quito, Ecuador',
+        email: 'cliente@gmail.com',
+      },
+      items: [
+        {
+          codigo: 'MART-16',
+          descripcion: 'Martillo de Uña 16oz Mango Fibra',
+          cantidad: 1,
+          precioUnitario: 12.50,
+          descuento: 0,
+          ivaRate: 15,
+        }
+      ],
+      formaPago: '01',
+      tipoComprobante: '01',
+      obligadoContabilidad: 'NO',
+    };
+
+    const { xml, claveAcceso } = generateInvoiceXML(sampleData);
+    downloadXML(xml, `factura_sri_${claveAcceso}.xml`);
+    showToast(`XML de prueba generado con clave: ${claveAcceso}`, 'success');
+  };
+
+  const handleSaveUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUser.name || !newUser.email || !newUser.username || !newUser.password) return;
+    if (editingUser) {
+      setUsersList(
+        usersList.map(u => u.id === editingUser.id ? { ...u, ...newUser } : u)
+      );
+      showToast('Usuario actualizado correctamente', 'success');
+    } else {
+      const foundRole = rolesList.find(
+        (r) => r.name.toLowerCase() === newUser.role.toLowerCase() || r.id === newUser.role
+      );
+      const initialRolePermissions = foundRole?.permissions || ROLE_PRESETS[newUser.role]?.permissions || {};
+      const newMap: Record<string, boolean> = {};
+      ALL_PERMISSIONS.forEach(p => {
+        newMap[p.id] = !!initialRolePermissions[p.id];
+      });
+
+      setUsersList([
+        ...usersList,
+        {
+          id: `USR-0${usersList.length + 1}`,
+          name: newUser.name,
+          email: newUser.email,
+          username: newUser.username,
+          role: newUser.role,
+          status: 'Activo',
+          password: newUser.password,
+          permissions: newMap
+        }
+      ]);
+      showToast('Usuario creado correctamente', 'success');
+    }
+    setNewUser({ name: '', email: '', username: '', role: rolesList[0]?.name || 'Vendedor', password: '' });
+    setEditingUser(null);
+    setShowAddUserModal(false);
+  };
+
+  const handleSaveRole = (role: SystemRole) => {
+    const existingIndex = rolesList.findIndex(
+      (r) => r.id === role.id || r.name.toLowerCase() === role.name.toLowerCase()
+    );
+    if (existingIndex >= 0) {
+      const updated = [...rolesList];
+      updated[existingIndex] = role;
+      setRolesList(updated);
+      showToast(`Rol "${role.name}" actualizado correctamente.`, 'success');
+    } else {
+      setRolesList([...rolesList, role]);
+      showToast(`Rol "${role.name}" creado correctamente.`, 'success');
+      // Si el modal de usuario estaba abierto, seleccionarlo automáticamente
+      setNewUser((prev) => ({ ...prev, role: role.name }));
+    }
+  };
+
+  const handleDeleteRole = (role: SystemRole) => {
+    if (role.isSystem) {
+      showAlert('Este es un rol base del sistema y no puede ser eliminado.', 'Acción no permitida', 'warning');
+      return;
+    }
+
+    const assignedUsers = usersList.filter(
+      (u) => (u.role || '').toLowerCase() === role.name.toLowerCase()
+    );
+
+    if (assignedUsers.length > 0) {
+      showAlert(
+        `No se puede eliminar el rol "${role.name}" porque actualmente está asignado a ${assignedUsers.length} usuario(s) (${assignedUsers.map((u) => u.name).join(', ')}). Por favor, reasigne otro rol a estos trabajadores antes de eliminarlo.`,
+        'Rol en uso',
+        'warning'
+      );
+      return;
+    }
+
+    showConfirm(
+      `¿Está seguro de eliminar permanentemente el rol "${role.name}"? Los permisos definidos para este rol se descartarán.`,
+      () => {
+        setRolesList(rolesList.filter((r) => r.id !== role.id));
+        showToast(`Rol "${role.name}" eliminado correctamente.`, 'success');
+      },
+      'Confirmar eliminación',
+      'Eliminar Rol',
+      'Cancelar'
+    );
+  };
+
+  const handleEditUser = (user: any) => {
+    setEditingUser(user);
+    setShowNewUserPassword(false);
+    setNewUser({
+      name: user.name,
+      email: user.email,
+      username: user.username,
+      role: user.role,
+      password: user.password || ''
+    });
+    setShowAddUserModal(true);
+  };
+
+  const handleToggleUserStatus = (user: any) => {
+    const adminsActive = usersList.filter(u => u.role === 'Administrador' && u.status === 'Activo').length;
+    if (user.role === 'Administrador' && user.status === 'Activo' && adminsActive <= 1) {
+      showAlert('No puedes deshabilitar al último administrador activo, quedarías sin acceso al sistema.', 'No permitido', 'error');
+      return;
+    }
+    const newStatus = user.status === 'Activo' ? 'Inactivo' : 'Activo';
+    setUsersList(usersList.map(u => u.id === user.id ? { ...u, status: newStatus } : u));
+    showToast(newStatus === 'Activo' ? 'Usuario habilitado' : 'Usuario deshabilitado', 'success');
+  };
+
+  const handleDeleteUser = (user: any) => {
+    const adminsActive = usersList.filter(u => u.role === 'Administrador' && u.status === 'Activo').length;
+    if (user.role === 'Administrador' && adminsActive <= 1) {
+      showAlert('No puedes eliminar al último administrador activo del sistema.', 'No permitido', 'error');
+      return;
+    }
+    showConfirm(
+      `¿Eliminar al usuario "${user.name}" (${user.username})? Esta acción no se puede deshacer.`,
+      () => {
+        setUsersList(usersList.filter(u => u.id !== user.id));
+        showToast('Usuario eliminado correctamente', 'success');
+      },
+      'Confirmar eliminación',
+      'Eliminar usuario',
+      'Cancelar'
+    );
+  };
+
+  const handleSavePermissions = (userId: string, updatedPermissions: Record<string, boolean>, newRole?: string) => {
+    setUsersList((prev: any[]) =>
+      prev.map((u: any) =>
+        u.id === userId
+          ? { ...u, permissions: updatedPermissions, ...(newRole ? { role: newRole } : {}) }
+          : u
+      )
+    );
+
+    // Si el usuario editado es el usuario en sesión activa, actualizar sesión de inmediato
+    if (currentUser && (currentUser.id === userId || currentUser.username === userForPermissions?.username)) {
+      const updatedCurr = { 
+        ...currentUser, 
+        permissions: updatedPermissions, 
+        ...(newRole ? { role: newRole } : {}) 
+      };
+      if (setCurrentUser) {
+        setCurrentUser(updatedCurr);
+      }
+      try {
+        sessionStorage.setItem('ferreteria_current_user', JSON.stringify(updatedCurr));
+      } catch (e) {}
+    }
+
+    showToast('Permisos de trabajador guardados y actualizados correctamente', 'success');
+  };
+
+  const currentTab = subTab === 'SETTINGS' ? 'CFG_EMPRESA' : subTab;
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* SUCCESS ALERTS */}
+      {savedSuccess && (
+        <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-2xl text-xs font-black flex items-center justify-between shadow-lg animate-fadeIn">
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span>Configuración y parámetros actualizados correctamente en el sistema.</span>
+          </div>
+        </div>
+      )}
+
+      {/* 1. CONFIGURACIÓN DE EMPRESA / DATOS FISCALES */}
+      {(currentTab === 'CFG_EMPRESA') && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl border border-blue-500/20">
+                <Building2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Datos Fiscales de la Empresa</h2>
+                <p className="text-xs text-slate-400 font-medium">Información legal y tributaria de la matriz según registro SRI</p>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* LOGO EMPRESARIAL UPLOADER */}
+            <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-orange-400" />
+                    <span>Logo Oficial de la Empresa</span>
+                  </label>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Se reflejará en la barra superior del sistema, pantalla de inicio y en la cabecera de todas las Facturas, Notas de Venta y RIDE del SRI.
+                  </p>
+                </div>
+                {formData.logoUrl && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveLogo}
+                    className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Eliminar Logo</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-5 pt-2">
+                <div className="w-32 h-32 rounded-2xl bg-slate-900 border-2 border-dashed border-slate-700 flex items-center justify-center p-2 relative group overflow-hidden shrink-0">
+                  {formData.logoUrl ? (
+                    <img
+                      src={formData.logoUrl}
+                      alt="Logo Empresa"
+                      className="w-full h-full object-contain rounded-xl"
+                    />
+                  ) : (
+                    <div className="text-center p-3">
+                      <ImageIcon className="w-8 h-8 text-slate-500 mx-auto mb-1 stroke-1" />
+                      <span className="text-[10px] font-bold text-slate-500 uppercase block">Sin Logo</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2 flex-1 w-full">
+                  <label className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold rounded-xl text-xs transition cursor-pointer active:scale-95 shadow-md">
+                    <Upload className="w-4 h-4 text-orange-400" />
+                    <span>{formData.logoUrl ? 'Cambiar Logo de la Empresa' : 'Subir Logo (PNG, JPG, SVG)'}</span>
+                    <input
+                      type="file"
+                      accept="image/png, image/jpeg, image/jpg, image/svg+xml, image/webp"
+                      onChange={handleLogoUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-500">
+                    Formato recomendado: PNG con fondo transparente o SVG de alta resolución (máx. 2MB).
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Nombre Comercial *</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.storeName}
+                  onChange={(e) => setFormData({ ...formData, storeName: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Razón Social Legal *</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.legalName}
+                  onChange={(e) => setFormData({ ...formData, legalName: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">RUC / Identificación Fiscal *</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.taxId}
+                  onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-orange-400 font-mono font-bold rounded-xl text-xs focus:outline-none focus:border-orange-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Teléfono de Atención</label>
+                <input
+                  type="text"
+                  value={formData.phone || ''}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Correo Electrónico Matriz</label>
+                <input
+                  type="email"
+                  value={formData.email || ''}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500"
+                />
+              </div>
+
+              {/* Ubicación Geográfica */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">País *</label>
+                <input
+                  type="text"
+                  value={formData.country ?? 'Ecuador'}
+                  onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500 font-medium"
+                  placeholder="Ej: Ecuador"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Provincia *</label>
+                <input
+                  type="text"
+                  value={formData.province ?? ''}
+                  onChange={(e) => setFormData({ ...formData, province: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500 font-medium"
+                  placeholder="Ej: Pichincha, Guayas, Azuay..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Ciudad / Cantón *</label>
+                <input
+                  type="text"
+                  value={formData.city ?? ''}
+                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500 font-medium"
+                  placeholder="Ej: Quito, Guayaquil, Cuenca..."
+                />
+              </div>
+
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label className="block text-xs font-bold text-slate-300 mb-1">Dirección Matriz / Fiscal *</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.address}
+                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs focus:outline-none focus:border-orange-500"
+                />
+              </div>
+            </div>
+
+            {/* Clasificación & Configuración Tributaria SRI */}
+            <div className="pt-4 border-t border-slate-800 space-y-4">
+              <h3 className="text-xs font-black text-orange-400 uppercase tracking-wider flex items-center gap-2">
+                <Receipt className="w-4 h-4" />
+                <span>Régimen Tributario & Clasificación SRI</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Obligado a llevar contabilidad (SI / NO) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Obligado a Llevar Contabilidad *</label>
+                  <select
+                    value={formData.accountingRequired ? 'SI' : 'NO'}
+                    onChange={(e) => setFormData({ ...formData, accountingRequired: e.target.value === 'SI' })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-white rounded-xl text-xs font-bold focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="NO">NO</option>
+                    <option value="SI">SI</option>
+                  </select>
+                </div>
+
+                {/* N° Contribuyente Especial */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">N° Contribuyente Especial (Resolución SRI)</label>
+                  <input
+                    type="text"
+                    value={formData.specialTaxpayerNumber ?? ''}
+                    onChange={(e) => setFormData({ ...formData, specialTaxpayerNumber: e.target.value })}
+                    placeholder="Escriba el N° de resolución o deje en blanco..."
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 text-amber-400 font-mono font-bold rounded-xl text-xs focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+              </div>
+
+              {/* Casillas para visar / Toggles */}
+              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
+                <span className="block text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Marque las casillas que correspondan a su contribución legal (SRI):
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* ¿Contribuyente régimen microempresas? */}
+                  <label className="flex items-center gap-3 p-3 bg-slate-900 rounded-xl border border-slate-800 hover:border-orange-500/50 cursor-pointer transition">
+                    <input
+                      type="checkbox"
+                      checked={!!formData.isMicroenterprise}
+                      onChange={(e) => setFormData({ ...formData, isMicroenterprise: e.target.checked })}
+                      className="w-4 h-4 rounded text-orange-500 focus:ring-orange-400 bg-slate-950 border-slate-700"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-white block">¿Régimen Microempresas?</span>
+                      <span className="text-[10px] text-slate-400 block">Marcar si aplica</span>
+                    </div>
+                  </label>
+
+                  {/* ¿Contribuyente régimen RIMPE? */}
+                  <label className="flex items-center gap-3 p-3 bg-slate-900 rounded-xl border border-slate-800 hover:border-orange-500/50 cursor-pointer transition">
+                    <input
+                      type="checkbox"
+                      checked={!!formData.isRimpe}
+                      onChange={(e) => setFormData({ ...formData, isRimpe: e.target.checked })}
+                      className="w-4 h-4 rounded text-orange-500 focus:ring-orange-400 bg-slate-950 border-slate-700"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-white block">¿Régimen RIMPE?</span>
+                      <span className="text-[10px] text-slate-400 block">Emprendedor / Negocio Popular</span>
+                    </div>
+                  </label>
+
+                  {/* ¿Agente de retención? */}
+                  <label className="flex items-center gap-3 p-3 bg-slate-900 rounded-xl border border-slate-800 hover:border-orange-500/50 cursor-pointer transition">
+                    <input
+                      type="checkbox"
+                      checked={!!formData.isRetentionAgent}
+                      onChange={(e) => setFormData({ ...formData, isRetentionAgent: e.target.checked })}
+                      className="w-4 h-4 rounded text-orange-500 focus:ring-orange-400 bg-slate-950 border-slate-700"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-white block">¿Agente de Retención?</span>
+                      <span className="text-[10px] text-slate-400 block">Resolución N° Agente SRI</span>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Si es agente de retención, campo extra para resolución */}
+                {formData.isRetentionAgent && (
+                  <div className="pt-2">
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                      N° Resolución Agente de Retención SRI:
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.retentionAgentResolution ?? ''}
+                      onChange={(e) => setFormData({ ...formData, retentionAgentResolution: e.target.value })}
+                      placeholder="Ej: NAC-DNCRASGC20-00000001"
+                      className="w-full max-w-md px-3 py-2 bg-slate-900 border border-slate-700 text-white rounded-xl text-xs font-mono font-bold focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 flex justify-end">
+              <button
+                type="submit"
+                className="px-6 py-2.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white font-black rounded-xl text-xs transition shadow-md shadow-orange-500/20 flex items-center space-x-2 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Guardar Datos de la Empresa</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* 2. FIRMA ELECTRÓNICA SRI (.p12 / Base64) */}
+      {currentTab === 'CFG_FIRMA_ELECTRONICA' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-amber-500/10 text-amber-400 rounded-2xl border border-amber-500/20">
+                <Key className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Firma Electrónica SRI (.p12 / Base64)</h2>
+                <p className="text-xs text-slate-400 font-medium">
+                  Cargue su archivo de firma digital para la emisión y firmado automático de comprobantes electrónicos XAdES-BES
+                </p>
+              </div>
+            </div>
+            <span className={`px-3 py-1 rounded-full text-xs font-black border flex items-center gap-1.5 ${
+              signatureBase64
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+            }`}>
+              {signatureBase64 ? (
+                <>
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>Firma Vinculada (Base64)</span>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  <span>Sin Firma Digital</span>
+                </>
+              )}
+            </span>
+          </div>
+
+          <div className="space-y-6">
+            {/* Uploader Box */}
+            <div className="p-6 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <FileCode className="w-4 h-4 text-amber-400" />
+                    <span>Archivo de Certificado Digital (.p12 o .pfx)</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Al seleccionar el archivo, el sistema lo <strong>convertirá automáticamente a formato Base64</strong> y lo guardará listo para el firmado del SRI.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-black rounded-xl text-xs transition cursor-pointer shadow-lg shadow-amber-500/20 flex items-center gap-2 active:scale-95">
+                    <Upload className="w-4 h-4" />
+                    <span>{signatureBase64 ? 'Reemplazar Archivo .p12' : 'Cargar Archivo .p12'}</span>
+                    <input
+                      type="file"
+                      accept=".p12,.pfx,application/x-pkcs12"
+                      onChange={handleP12FileUpload}
+                      className="hidden"
+                    />
+                  </label>
+
+                  {signatureBase64 && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveSignature}
+                      className="p-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      title="Eliminar Firma"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Status & Metadata Card */}
+              {signatureBase64 ? (
+                <div className="p-4 bg-slate-900 border border-emerald-500/30 rounded-xl space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20">
+                        <CheckCircle2 className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-white font-mono">
+                          {signatureFileName || 'firma_electronica.p12'}
+                        </h4>
+                        <p className="text-[10px] text-slate-400">
+                          Tamaño: <strong>{signatureFileSize || 'N/A'}</strong> • Convertido a Base64 ({signatureBase64.length.toLocaleString()} caracteres)
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyBase64}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer self-start sm:self-auto border border-slate-700"
+                    >
+                      {copiedBase64 ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedBase64 ? 'Copiado' : 'Copiar Base64'}</span>
+                    </button>
+                  </div>
+
+                  {/* Base64 String Preview */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1 uppercase">
+                      Cadena Base64 Generada (Primeros 160 caracteres):
+                    </label>
+                    <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800 font-mono text-[11px] text-amber-400/90 break-all select-all">
+                      {signatureBase64.slice(0, 160)}...
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-5 border-2 border-dashed border-slate-800 rounded-xl text-center space-y-2">
+                  <Key className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-xs font-bold text-slate-400">Ningún archivo de firma .p12 seleccionado</p>
+                  <p className="text-[10px] text-slate-500 max-w-md mx-auto">
+                    Haga clic en el botón superior para seleccionar su archivo de certificado emitido por el Banco Central del Ecuador, Security Data, ANF, UANATACA, etc.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Password Configuration */}
+            <div className="p-6 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+              <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <Lock className="w-4 h-4 text-purple-400" />
+                <span>Contraseña del Certificado Digital</span>
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                Ingrese la contraseña proporcionada por la entidad certificadora al momento de emitir su firma electrónica. Esta clave se usará para desencriptar el certificado durante el firmado XML del SRI.
+              </p>
+
+              <div className="max-w-md relative">
+                <input
+                  type={showSignaturePassword ? 'text' : 'password'}
+                  value={signaturePassword}
+                  onChange={(e) => {
+                    setSignaturePassword(e.target.value);
+                    try {
+                      localStorage.setItem('ferreteria_settings_p12_password', e.target.value);
+                    } catch (err) {}
+                  }}
+                  placeholder="Ingrese la contraseña de su archivo .p12"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-amber-500 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSignaturePassword(!showSignaturePassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-1"
+                >
+                  {showSignaturePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Ambiente SRI (Pruebas / Producción) */}
+            <div className="p-6 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-amber-400" />
+                    <span>Ambiente de Emisión SRI (Ecuador)</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Seleccione si desea emitir facturas en el servidor de <strong>PRUEBAS (celcer.sri.gob.ec)</strong> para ensayos, o en <strong>PRODUCCIÓN (cel.sri.gob.ec)</strong> con validez tributaria real.
+                  </p>
+                </div>
+                <span className={`px-3 py-1 rounded-xl text-xs font-black uppercase border ${
+                  sriMode === 'PRODUCCION' ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                }`}>
+                  {sriMode}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSriMode('PRUEBAS');
+                    showToast('Ambiente cambiado a PRUEBAS (celcer.sri.gob.ec)', 'info');
+                  }}
+                  className={`p-4 rounded-xl border text-left transition cursor-pointer ${
+                    sriMode === 'PRUEBAS'
+                      ? 'bg-amber-500/10 border-amber-500/40 ring-2 ring-amber-500/30'
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-white">1. AMBIENTE DE PRUEBAS</span>
+                    {sriMode === 'PRUEBAS' && <CheckCircle2 className="w-4 h-4 text-amber-400" />}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Servidor oficial de homologación del SRI (celcer). No genera obligaciones fiscales ni débitos.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSriMode('PRODUCCION');
+                    showToast('Ambiente cambiado a PRODUCCIÓN (cel.sri.gob.ec)', 'warning');
+                  }}
+                  className={`p-4 rounded-xl border text-left transition cursor-pointer ${
+                    sriMode === 'PRODUCCION'
+                      ? 'bg-purple-500/10 border-purple-500/40 ring-2 ring-purple-500/30'
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-white">2. AMBIENTE DE PRODUCCIÓN</span>
+                    {sriMode === 'PRODUCCION' && <CheckCircle2 className="w-4 h-4 text-purple-400" />}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Servidor en vivo del SRI (cel). Cada comprobante emitido es legalmente válido y reportado al SRI.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* Java Backend API SRI Connection */}
+            <div className="p-6 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <Server className="w-4 h-4 text-cyan-400" />
+                    <span>Conexión con Backend Java SRI (Spring Boot)</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Indique la URL de su API en Spring Boot para realizar el firmado XAdES-BES y la transmisión a los Web Services del SRI.
+                  </p>
+                </div>
+
+                {backendStatus.tested && (
+                  <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${
+                    backendStatus.ok
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                      : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                  }`}>
+                    {backendStatus.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                    <span>{backendStatus.ok ? 'Backend Java Activo (200 OK)' : 'Error de Conexión'}</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                <div className="md:col-span-2 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">URL del Backend Local Java (Spring Boot)</label>
+                    <span className="text-[10px] font-mono text-cyan-400">
+                      Puerto predeterminado: :8080
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={sriApiUrl}
+                    onChange={(e) => setSriApiUrl(e.target.value)}
+                    placeholder="http://localhost:8080"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="flex items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestBackendConnection}
+                    disabled={isTestingBackend}
+                    className="w-full px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isTestingBackend ? 'animate-spin' : ''}`} />
+                    <span>{isTestingBackend ? 'Probando...' : 'Probar Conexión'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadSampleXml}
+                    className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700 whitespace-nowrap"
+                    title="Descargar XML de prueba para verificar sintaxis del SRI"
+                  >
+                    <Download className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Descargar XML</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Technical Information Box */}
+            <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl space-y-2 text-xs text-slate-300">
+              <h4 className="font-bold text-blue-400 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4" />
+                <span>¿Cómo funciona el firmado digital y la transmisión al SRI?</span>
+              </h4>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                El ERP genera el XML de la factura con la <strong>Clave de Acceso de 49 dígitos (Módulo 11)</strong> y se comunica con su backend Java en <code>{sriApiUrl || 'http://localhost:8080/api/sri'}</code>. El backend firma el XML con su certificado digital <strong>PKCS#12 (.p12 en Base64)</strong> bajo el estándar <strong>XAdES-BES</strong> y lo envía a los Web Services del SRI tanto en ambiente de <strong>Pruebas</strong> como de <strong>Producción</strong>.
+              </p>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  SriBackendService.setBaseUrl(sriApiUrl);
+                  setSavedSuccess(true);
+                  showToast('Firma electrónica, contraseña y URL de Backend guardadas exitosamente.', 'success');
+                  setTimeout(() => setSavedSuccess(false), 3000);
+                }}
+                className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-black rounded-xl text-xs transition shadow-md shadow-amber-500/20 flex items-center space-x-2 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Guardar Configuración de Firma & API</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. PUNTO DE EMISIÓN */}
+      {currentTab === 'CFG_PUNTO_EMISION' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-purple-500/10 text-purple-400 rounded-2xl border border-purple-500/20">
+                <MapPin className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Establecimientos & Puntos de Emisión SRI</h2>
+                <p className="text-xs text-slate-400 font-medium">Configuración de series de comprobantes electrónicos y firma digital</p>
+              </div>
+            </div>
+            <span className={`px-3 py-1 rounded-full text-xs font-black border ${
+              sriMode === 'PRODUCCION' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+            }`}>
+              Ambiente: {sriMode}
+            </span>
+          </div>
+
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Establecimiento</label>
+                <input 
+                  type="text" 
+                  value={establishment}
+                  onChange={(e) => setEstablishment(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-white focus:outline-none focus:border-purple-500 text-center"
+                />
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Punto de Emisión</label>
+                <input 
+                  type="text" 
+                  value={emissionPoint}
+                  onChange={(e) => setEmissionPoint(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-white focus:outline-none focus:border-purple-500 text-center"
+                />
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Ambiente SRI</label>
+                <Select 
+                  value={sriMode}
+                  onChange={(e) => setSriMode(e.target.value as any)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="PRODUCCION">PRODUCCIÓN (Facturación Real)</option>
+                  <option value="PRUEBAS">PRUEBAS (Pruebas SRI)</option>
+                </Select>
+              </div>
+            </div>
+
+            <div className="p-5 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-purple-400" />
+                  <span>Secuenciales de Comprobantes Activos</span>
+                </h3>
+                <span className="text-[10px] text-slate-400">
+                  Establecimiento y punto configurados: <strong className="text-purple-400 font-mono">{establishment.padStart(3, '0')}-{emissionPoint.padStart(3, '0')}</strong>
+                </span>
+              </div>
+
+              {/* Live Preview Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-slate-900/90 rounded-xl border border-slate-800/80">
+                <div>
+                  <span className="text-[9px] uppercase font-extrabold text-slate-400 block">Próxima Factura SRI</span>
+                  <span className="font-mono text-xs font-black text-emerald-400">
+                    {establishment.padStart(3, '0')}-{emissionPoint.padStart(3, '0')}-{secInvoice.padStart(9, '0')}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase font-extrabold text-slate-400 block">Próxima Nota de Venta</span>
+                  <span className="font-mono text-xs font-black text-amber-400">
+                    #{secBoleta.padStart(6, '0')}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase font-extrabold text-slate-400 block">Próxima Cotización</span>
+                  <span className="font-mono text-xs font-black text-cyan-400">
+                    COT-{secQuote.padStart(6, '0')}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-1">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">Secuencial Facturas SRI (9 dígitos)</label>
+                  <input 
+                    type="text" 
+                    value={secInvoice}
+                    onChange={(e) => setSecInvoice(e.target.value)}
+                    placeholder="000000001"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-400 text-center"
+                  />
+                  <span className="text-[9px] text-slate-500 mt-1 block">Formato: {establishment.padStart(3, '0')}-{emissionPoint.padStart(3, '0')}-000000001</span>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">Secuencial Notas de Venta (6 dígitos)</label>
+                  <input 
+                    type="text" 
+                    value={secBoleta}
+                    onChange={(e) => setSecBoleta(e.target.value)}
+                    placeholder="000001"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-amber-400 text-center"
+                  />
+                  <span className="text-[9px] text-slate-500 mt-1 block">Formato: #000001</span>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">Secuencial Cotizaciones (6 dígitos)</label>
+                  <input 
+                    type="text" 
+                    value={secQuote}
+                    onChange={(e) => setSecQuote(e.target.value)}
+                    placeholder="000001"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-cyan-400 text-center"
+                  />
+                  <span className="text-[9px] text-slate-500 mt-1 block">Formato: COT-000001</span>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">Secuencial Notas de Crédito SRI</label>
+                  <input 
+                    type="text" 
+                    value={secCreditNote}
+                    onChange={(e) => setSecCreditNote(e.target.value)}
+                    placeholder="000000001"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-rose-400 text-center"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">Secuencial Retenciones SRI</label>
+                  <input 
+                    type="text" 
+                    value={secRetention}
+                    onChange={(e) => setSecRetention(e.target.value)}
+                    placeholder="000000001"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-indigo-400 text-center"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 flex justify-end">
+              <button
+                onClick={() => {
+                  setSavedSuccess(true);
+                  showToast('Puntos de emisión y secuenciales guardados exitosamente', 'success');
+                  setTimeout(() => setSavedSuccess(false), 3000);
+                }}
+                className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black rounded-xl text-xs transition shadow-md shadow-purple-600/20 flex items-center space-x-2 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Guardar Puntos de Emisión & Secuenciales</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. IMPUESTOS & TARIFAS DE IVA */}
+      {currentTab === 'CFG_IMPUESTOS' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl border border-emerald-500/20">
+                <Percent className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Catálogo de Impuestos & Tarifas de IVA (SRI)</h2>
+                <p className="text-xs text-slate-400 font-medium">
+                  Gestione las tarifas de IVA aplicadas en ventas, compras, productos y facturación electrónica
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleOpenAddTax}
+              className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer transition active:scale-95 shrink-0"
+            >
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>NUEVA TARIFA DE IVA</span>
+            </button>
+          </div>
+
+          {/* Tabla de Tarifas de IVA */}
+          <div className="space-y-4">
+            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b border-slate-800">
+                  <tr>
+                    <th className="p-3.5">Tarifa / Denominación</th>
+                    <th className="p-3.5 text-center">Tasa (%)</th>
+                    <th className="p-3.5 text-center">Código SRI</th>
+                    <th className="p-3.5 text-center">Por Defecto</th>
+                    <th className="p-3.5 text-center">Estado</th>
+                    <th className="p-3.5 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/70 font-medium">
+                  {taxRates.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-slate-500">
+                        No hay tarifas de IVA registradas. Haga clic en "Nueva Tarifa de IVA" para agregar una.
+                      </td>
+                    </tr>
+                  ) : (
+                    taxRates.map((tax) => {
+                      const isDefault = tax.isDefault || formData.defaultTaxRate === tax.rate;
+                      return (
+                        <tr key={tax.id} className="hover:bg-slate-900/40 transition">
+                          <td className="p-3.5">
+                            <div className="flex items-center space-x-2.5">
+                              <span className="font-bold text-white text-xs">{tax.name}</span>
+                              {isDefault && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  <Star className="w-2.5 h-2.5 fill-current" />
+                                  <span>PREDETERMINADA</span>
+                                </span>
+                              )}
+                            </div>
+                            {tax.description && (
+                              <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{tax.description}</p>
+                            )}
+                          </td>
+                          <td className="p-3.5 text-center font-mono">
+                            <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-slate-900 text-emerald-400 border border-slate-800">
+                              {tax.rate.toFixed(2)}%
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center font-mono">
+                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-900 text-orange-400 border border-slate-800">
+                              [{tax.codeSri || '4'}]
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center">
+                            {isDefault ? (
+                              <span className="text-[10px] font-black text-emerald-400 flex items-center justify-center gap-1">
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                <span>Sí</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleSetDefaultTax(tax)}
+                                className="text-[10px] text-slate-400 hover:text-emerald-400 font-bold px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 transition cursor-pointer"
+                                title="Establecer como tarifa por defecto para nuevos productos"
+                              >
+                                Usar por defecto
+                              </button>
+                            )}
+                          </td>
+                          <td className="p-3.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleActiveTax(tax)}
+                              className={`px-2.5 py-0.5 rounded text-[10px] font-black border transition cursor-pointer ${
+                                tax.active !== false
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                                  : 'bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700'
+                              }`}
+                              title={tax.active !== false ? 'Haga clic para desactivar' : 'Haga clic para activar'}
+                            >
+                              {tax.active !== false ? 'HABILITADO' : 'INACTIVO'}
+                            </button>
+                          </td>
+                          <td className="p-3.5 text-right">
+                            <div className="flex items-center justify-end space-x-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditTax(tax)}
+                                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition cursor-pointer"
+                                title="Editar Tarifa de IVA"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTax(tax)}
+                                disabled={isDefault}
+                                className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={isDefault ? 'No se puede eliminar la tarifa por defecto' : 'Eliminar Tarifa'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Parámetros Generales de Facturación e Impuestos */}
+          <form onSubmit={handleSubmit} className="space-y-6 pt-2">
+            <div className="flex items-center space-x-2 pb-2 border-b border-slate-800">
+              <Sliders className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-xs font-black text-white uppercase tracking-wider">
+                Parámetros Monetarios y Tarifa Predeterminada
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="block text-xs font-bold text-slate-300">Tasa de IVA Predeterminada (%) *</label>
+                <Select
+                  value={formData.defaultTaxRate.toString()}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value) || 0;
+                    setFormData({ ...formData, defaultTaxRate: val });
+                  }}
+                  className="w-full bg-slate-900 border border-slate-800 text-emerald-400 font-mono font-black text-sm rounded-xl py-2 px-3 focus:outline-none focus:border-emerald-500"
+                >
+                  {taxRates.map((t) => (
+                    <option key={t.id} value={t.rate.toString()}>
+                      {t.name} ({t.rate}%)
+                    </option>
+                  ))}
+                </Select>
+                <span className="block text-[10px] text-slate-400">Aplicada automáticamente al crear nuevos productos</span>
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="block text-xs font-bold text-slate-300">Símbolo Monetario</label>
+                <input
+                  type="text"
+                  value={formData.currencySymbol}
+                  onChange={(e) => setFormData({ ...formData, currencySymbol: e.target.value })}
+                  className="w-full bg-slate-900 border border-slate-800 text-white font-mono font-bold text-center rounded-xl py-2"
+                />
+                <span className="block text-[10px] text-slate-400">Símbolo visible en pantalla y reportes ($)</span>
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <label className="block text-xs font-bold text-slate-300">Código de Moneda ISO</label>
+                <input
+                  type="text"
+                  value={formData.currencyCode || 'USD'}
+                  onChange={(e) => setFormData({ ...formData, currencyCode: e.target.value })}
+                  className="w-full bg-slate-900 border border-slate-800 text-white font-mono font-bold text-center rounded-xl py-2 uppercase"
+                />
+                <span className="block text-[10px] text-slate-400">Código ISO para XML SRI (USD)</span>
+              </div>
+            </div>
+
+            {/* Información Técnica SRI */}
+            <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-2 text-xs text-slate-300">
+              <h4 className="font-bold text-emerald-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Compatibilidad y Tabla de Códigos de Porcentaje SRI Ecuador</span>
+              </h4>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Según la ficha técnica del SRI (v2.10): Código <strong>0</strong> = 0% (Tarifa Cero), Código <strong>2</strong> = 12%, Código <strong>4</strong> = 15% (Vigente General), Código <strong>5</strong> = 5% (Materiales Construcción), Código <strong>10</strong> = 13%, Código <strong>6</strong> = No Objeto de IVA, Código <strong>7</strong> = Exento de IVA. Todas las tarifas agregadas se calculan y desglosan en el Punto de Venta, Inventario, Compras y Comprobantes Electrónicos.
+              </p>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 flex justify-end">
+              <button
+                type="submit"
+                className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black rounded-xl text-xs transition shadow-md shadow-emerald-600/20 flex items-center space-x-2 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Guardar Parámetros Tributarios</span>
+              </button>
+            </div>
+          </form>
+
+          {/* MODAL CREAR / EDITAR TARIFA DE IVA */}
+          {showTaxModal && (
+            <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl animate-scaleUp">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <Percent className="w-4 h-4 text-emerald-400" />
+                    <span>{editingTax ? 'Editar Tarifa de IVA' : 'Crear Nueva Tarifa de IVA'}</span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowTaxModal(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveTax} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">Nombre de la Tarifa *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej: IVA 13% Especial, IVA 8% Turismo"
+                      value={taxForm.name}
+                      onChange={(e) => setTaxForm({ ...taxForm, name: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-300 block mb-1">Porcentaje (%) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        required
+                        value={taxForm.rate}
+                        onChange={(e) => setTaxForm({ ...taxForm, rate: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-400 focus:outline-none focus:border-emerald-500 text-center"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-300 block mb-1">Código SRI</label>
+                      <Select
+                        value={taxForm.codeSri}
+                        onChange={(e) => setTaxForm({ ...taxForm, codeSri: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-orange-400 font-mono font-bold"
+                      >
+                        <option value="4">[4] 15% (Tarifa General)</option>
+                        <option value="5">[5] 5% (Materiales Construcción)</option>
+                        <option value="0">[0] 0% (Tarifa Cero)</option>
+                        <option value="10">[10] 13%</option>
+                        <option value="2">[2] 12%</option>
+                        <option value="8">[8] 8% (Turismo/Feriados)</option>
+                        <option value="3">[3] 14%</option>
+                        <option value="6">[6] No Objeto de IVA</option>
+                        <option value="7">[7] Exento de IVA</option>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">Descripción / Base Legal</label>
+                    <textarea
+                      rows={2}
+                      placeholder="Información adicional sobre la aplicación de esta tarifa..."
+                      value={taxForm.description}
+                      onChange={(e) => setTaxForm({ ...taxForm, description: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t border-slate-800">
+                    <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={taxForm.isDefault}
+                        onChange={(e) => setTaxForm({ ...taxForm, isDefault: e.target.checked })}
+                        className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 border-slate-700 bg-slate-950"
+                      />
+                      <span>Establecer como tarifa predeterminada para nuevos productos</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={taxForm.active}
+                        onChange={(e) => setTaxForm({ ...taxForm, active: e.target.checked })}
+                        className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 border-slate-700 bg-slate-950"
+                      />
+                      <span>Tarifa activa para selección en facturación y ventas</span>
+                    </label>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-800 flex items-center justify-end space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTaxModal(false)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black transition shadow-lg shadow-emerald-600/20 cursor-pointer"
+                    >
+                      {editingTax ? 'Guardar Cambios' : 'Crear Tarifa'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4. CAJA */}
+      {currentTab === 'CFG_CAJA' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-teal-500/10 text-teal-400 rounded-2xl border border-teal-500/20">
+                <DollarSign className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Configuración de Cajas & Cierres</h2>
+                <p className="text-xs text-slate-400 font-medium">Límites de efectivo, fondo de caja chica y políticas de arqueo</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+              <label className="text-xs font-bold text-slate-300">Base Inicial en Efectivo por Defecto ($)</label>
+              <input 
+                type="number"
+                step="any"
+                defaultValue={100.00}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-teal-400"
+              />
+            </div>
+
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+              <label className="text-xs font-bold text-slate-300">Límite Máximo de Efectivo en Caja ($)</label>
+              <input 
+                type="number"
+                step="any"
+                defaultValue={1000.00}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-amber-400"
+              />
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-800 flex justify-end">
+            <button
+              onClick={() => {
+                setSavedSuccess(true);
+                setTimeout(() => setSavedSuccess(false), 3000);
+              }}
+              className="px-6 py-2.5 bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-black rounded-xl text-xs transition shadow-md shadow-teal-600/20 flex items-center space-x-2 cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              <span>Guardar Configuración de Caja</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 5. FORMAS DE PAGO */}
+      {currentTab === 'CFG_FORMAS_PAGO' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-2xl border border-indigo-500/20">
+                <CreditCard className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Catálogo de Formas de Pago SRI</h2>
+                <p className="text-xs text-slate-400 font-medium">
+                  Habilite o deshabilite los métodos de pago que se mostrarán en la caja y punto de facturación
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleOpenAddPaymentMethod}
+              className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs rounded-xl shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 cursor-pointer transition active:scale-95 shrink-0"
+            >
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>NUEVA FORMA DE PAGO</span>
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {paymentMethods.map((pm) => (
+              <div
+                key={pm.id}
+                className={`p-4 bg-slate-950 rounded-2xl border transition flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                  pm.active ? 'border-slate-800 hover:border-slate-700' : 'border-slate-850 opacity-60 bg-slate-950/60'
+                }`}
+              >
+                <div className="flex items-start sm:items-center space-x-3">
+                  <span className="font-mono text-xs font-black text-orange-400 bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-800 shrink-0">
+                    [{pm.code}]
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-white">{pm.name}</span>
+                      {pm.shortName && (
+                        <span className="text-[10px] font-mono font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20">
+                          Etiqueta: {pm.shortName}
+                        </span>
+                      )}
+                      {pm.default && (
+                        <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
+                          <Star className="w-3 h-3 fill-amber-400" />
+                          <span>PREDETERMINADA EN CAJA</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {pm.active ? 'Visible en el modal de cobro de facturación' : 'Oculto en el punto de venta'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 shrink-0 self-end md:self-auto">
+                  {!pm.default && pm.active && (
+                    <button
+                      type="button"
+                      onClick={() => handleSetDefaultPaymentMethod(pm.id)}
+                      className="px-2.5 py-1.5 bg-slate-900 hover:bg-amber-500/10 text-slate-400 hover:text-amber-400 border border-slate-800 hover:border-amber-500/30 rounded-xl text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                      title="Establecer como método preseleccionado en caja"
+                    >
+                      <Star className="w-3.5 h-3.5" />
+                      <span>Hacer Predeterminada</span>
+                    </button>
+                  )}
+
+                  {/* Toggle Switch */}
+                  <button
+                    type="button"
+                    onClick={() => handleTogglePaymentMethod(pm.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 border cursor-pointer ${
+                      pm.active
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-850'
+                    }`}
+                  >
+                    {pm.active ? (
+                      <>
+                        <ToggleRight className="w-4 h-4 text-emerald-400" />
+                        <span>HABILITADO</span>
+                      </>
+                    ) : (
+                      <>
+                        <ToggleLeft className="w-4 h-4 text-slate-500" />
+                        <span>INACTIVO</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditPaymentMethod(pm)}
+                    className="p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 transition cursor-pointer"
+                    title="Editar"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                  </button>
+
+                  {!['01', '16', '19', '20'].includes(pm.code) && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePaymentMethod(pm)}
+                      className="p-2 bg-slate-900 hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 rounded-xl border border-slate-800 hover:border-rose-500/30 transition cursor-pointer"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Modal Agregar / Editar Forma de Pago */}
+          {showPaymentMethodModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl p-6 space-y-5 animate-scaleUp">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <CreditCard className="w-5 h-5 text-indigo-400" />
+                    <h3 className="text-base font-black text-white">
+                      {editingPaymentMethod ? 'Editar Forma de Pago' : 'Nueva Forma de Pago'}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPaymentMethodModal(false)}
+                    className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSavePaymentMethodForm} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">Código SRI</label>
+                    <Select
+                      value={paymentMethodForm.code}
+                      onChange={(e) => setPaymentMethodForm({ ...paymentMethodForm, code: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-orange-400"
+                    >
+                      <option value="01">[01] SIN UTILIZACION DEL SISTEMA FINANCIERO (EFECTIVO)</option>
+                      <option value="16">[16] TARJETA DE DEBITO</option>
+                      <option value="19">[19] TARJETA DE CREDITO</option>
+                      <option value="20">[20] OTROS CON UTILIZACION DEL SISTEMA FINANCIERO (TRANSFERENCIA/DEPOSITO)</option>
+                      <option value="15">[15] COMPENSACION DE DEUDAS</option>
+                      <option value="21">[21] ENDOSO DE TITULOS</option>
+                      <option value="17">[17] DINERO ELECTRONICO</option>
+                      <option value="18">[18] TARJETA PREPAGO</option>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">Nombre Completo SRI *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej: TRANSFERENCIA BANCARIA DIRECTA"
+                      value={paymentMethodForm.name}
+                      onChange={(e) => setPaymentMethodForm({ ...paymentMethodForm, name: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">Nombre Corto (Botón en Caja)</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: Transferencia"
+                      value={paymentMethodForm.shortName}
+                      onChange={(e) => setPaymentMethodForm({ ...paymentMethodForm, shortName: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={paymentMethodForm.active}
+                        onChange={(e) => setPaymentMethodForm({ ...paymentMethodForm, active: e.target.checked })}
+                        className="w-4 h-4 rounded text-indigo-500 focus:ring-indigo-500 border-slate-700 bg-slate-950"
+                      />
+                      <span>Habilitado para cobro en caja y facturación</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={paymentMethodForm.default}
+                        onChange={(e) => setPaymentMethodForm({ ...paymentMethodForm, default: e.target.checked })}
+                        className="w-4 h-4 rounded text-indigo-500 focus:ring-indigo-500 border-slate-700 bg-slate-950"
+                      />
+                      <span>Establecer como método predeterminado en caja</span>
+                    </label>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-800 flex items-center justify-end space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowPaymentMethodModal(false)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-black transition shadow-lg shadow-indigo-600/20 cursor-pointer"
+                    >
+                      {editingPaymentMethod ? 'Guardar Cambios' : 'Registrar Método'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 6. USUARIOS Y ROLES */}
+      {currentTab === 'CFG_USUARIOS' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          {/* Header con Sub-tabs */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-cyan-500/10 text-cyan-400 rounded-2xl border border-cyan-500/20">
+                <Users className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Gestión de Usuarios & Roles</h2>
+                <p className="text-xs text-slate-400 font-medium">Control de acceso, perfiles de trabajo y permisos granulares del personal</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Selector de Sub-tab */}
+              <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setUserSubTab('users')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    userSubTab === 'users'
+                      ? 'bg-cyan-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Usuarios ({usersList.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserSubTab('roles')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    userSubTab === 'roles'
+                      ? 'bg-cyan-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Roles & Perfiles ({rolesList.length})</span>
+                </button>
+              </div>
+
+              {/* Botón de Acción Principal según sub-tab */}
+              {userSubTab === 'users' ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingRole(null);
+                      setShowRoleModal(true);
+                    }}
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>+ NUEVO ROL</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingUser(null);
+                      setNewUser({ name: '', email: '', username: '', role: rolesList[0]?.name || 'Vendedor', password: '' });
+                      setShowAddUserModal(true);
+                    }}
+                    className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-xl transition shadow-lg shadow-cyan-600/20 flex items-center gap-2 cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>NUEVO USUARIO</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setEditingRole(null);
+                    setShowRoleModal(true);
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-xl transition shadow-lg shadow-cyan-600/20 flex items-center gap-2 cursor-pointer"
+                >
+                  <Shield className="w-4 h-4" />
+                  <span>+ CREAR NUEVO ROL</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* VISTA 1: TABLA DE USUARIOS */}
+          {userSubTab === 'users' && (
+            <div className="overflow-hidden rounded-2xl border border-slate-800">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b border-slate-800">
+                  <tr>
+                    <th className="px-3 py-2.5">Usuario</th>
+                    <th className="px-3 py-2.5">Cédula / RUC</th>
+                    <th className="px-3 py-2.5">Rol Asignado</th>
+                    <th className="px-3 py-2.5 text-center">Estado</th>
+                    <th className="px-3 py-2.5 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 font-medium">
+                  {usersList.map((u) => {
+                    const isActive = u.status === 'Activo';
+                    const roleDef = rolesList.find(
+                      (r) => r.name.toLowerCase() === (u.role || '').toLowerCase() || r.id === u.role
+                    );
+
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-800/40 transition">
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-500/10 border border-cyan-500/25 text-cyan-400 flex items-center justify-center text-[10px] font-black shrink-0">
+                              {(u.name || '?').trim().charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-white truncate">{u.name}</div>
+                              <div className="text-[10px] text-slate-500 font-mono truncate">{u.email}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-amber-500 font-bold whitespace-nowrap">{u.username || 'N/A'}</td>
+                        <td className="px-3 py-2">
+                          <div className="space-y-0.5">
+                            <span className="px-2.5 py-0.5 bg-slate-950 border border-slate-800 rounded-md text-slate-200 text-[10px] font-bold whitespace-nowrap inline-flex items-center gap-1.5 shadow-sm">
+                              <span>{roleDef?.label || u.role}</span>
+                            </span>
+                            {u.permissions && Object.keys(u.permissions).length > 0 && (
+                              <div className="text-[9px] font-mono text-orange-400 font-semibold flex items-center gap-1">
+                                <span>Personalizado ({Object.values(u.permissions).filter(Boolean).length} act.)</span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleUserStatus(u)}
+                            title={isActive ? 'Deshabilitar usuario' : 'Habilitar usuario'}
+                            className={`relative inline-flex items-center w-9 h-4.5 rounded-full transition cursor-pointer ${
+                              isActive ? 'bg-emerald-500/80' : 'bg-slate-700'
+                            }`}
+                          >
+                            <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-all ${isActive ? 'left-4.5' : 'left-0.5'}`} />
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUserForPermissions(u);
+                                setShowPermissionsModal(true);
+                              }}
+                              title="Configurar Permisos Detallados del Trabajador"
+                              className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500 text-orange-400 hover:text-white rounded-lg transition text-[10px] font-black flex items-center gap-1 border border-orange-500/25 cursor-pointer shadow-sm"
+                            >
+                              <Shield className="w-3 h-3" />
+                              <span>Permisos</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditUser(u)}
+                              title="Editar usuario"
+                              className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(u)}
+                              title="Eliminar usuario"
+                              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* VISTA 2: CATÁLOGO DE ROLES & PERFILES */}
+          {userSubTab === 'roles' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <p>
+                  Defina perfiles y plantillas de acceso para el personal (cajeros, auditores, vendedores, bodegueros, supervisores). Al crear un usuario, heredará automáticamente los permisos de su rol asignado.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {rolesList.map((role) => {
+                  const assignedCount = usersList.filter(
+                    (u) => (u.role || '').toLowerCase() === role.name.toLowerCase() || u.role === role.id
+                  ).length;
+                  const activePermsCount = Object.values(role.permissions || {}).filter(Boolean).length;
+                  const totalPerms = ALL_PERMISSIONS.length;
+
+                  // Mapeo de colores
+                  const colorClassMap: Record<string, { bg: string; border: string; text: string }> = {
+                    amber: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400' },
+                    emerald: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400' },
+                    cyan: { bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', text: 'text-cyan-400' },
+                    purple: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-400' },
+                    blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-400' },
+                    rose: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400' },
+                    orange: { bg: 'bg-orange-500/10', border: 'border-orange-500/30', text: 'text-orange-400' },
+                    indigo: { bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', text: 'text-indigo-400' },
+                  };
+                  const theme = colorClassMap[role.color || 'cyan'] || colorClassMap.cyan;
+                  const emojiChar = role.label.match(/^(\p{Extended_Pictographic}|\S+)/u)?.[1] || '🛡️';
+
+                  return (
+                    <div
+                      key={role.id}
+                      className="bg-slate-950/70 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4.5 flex flex-col justify-between space-y-4 transition shadow-md hover:shadow-xl group"
+                    >
+                      <div>
+                        {/* Header Tarjeta */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className={`w-9 h-9 rounded-xl ${theme.bg} border ${theme.border} ${theme.text} flex items-center justify-center text-base shrink-0 shadow-inner`}>
+                              {emojiChar}
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="font-bold text-white text-sm truncate flex items-center gap-1.5">
+                                <span>{role.name}</span>
+                              </h3>
+                              <span className="text-[10px] font-mono text-slate-500 block truncate">
+                                {role.id}
+                              </span>
+                            </div>
+                          </div>
+
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider shrink-0 border ${
+                              role.isSystem
+                                ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                                : 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300'
+                            }`}
+                          >
+                            {role.isSystem ? 'Sistema' : 'Personalizado'}
+                          </span>
+                        </div>
+
+                        {/* Descripción */}
+                        <p className="text-xs text-slate-400 mt-3 line-clamp-2 min-h-[32px] leading-relaxed">
+                          {role.description || 'Sin descripción detallada para este rol.'}
+                        </p>
+
+                        {/* Stats */}
+                        <div className="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/80 text-xs">
+                          <div className="bg-slate-900/90 rounded-xl p-2 border border-slate-800/80">
+                            <span className="text-[10px] text-slate-500 font-medium block">Permisos Activos</span>
+                            <div className="font-bold text-white text-xs mt-0.5 flex items-center gap-1">
+                              <span className={theme.text}>{activePermsCount}</span>
+                              <span className="text-slate-500 text-[10px]">/ {totalPerms}</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-900/90 rounded-xl p-2 border border-slate-800/80">
+                            <span className="text-[10px] text-slate-500 font-medium block">Usuarios Asignados</span>
+                            <div className="font-bold text-white text-xs mt-0.5 flex items-center gap-1">
+                              <Users className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>{assignedCount}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Botones de Acción */}
+                      <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingRole(role);
+                            setShowRoleModal(true);
+                          }}
+                          className="flex-1 px-3 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/40 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Configurar Permisos</span>
+                        </button>
+
+                        {!role.isSystem && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRole(role)}
+                            title="Eliminar rol personalizado"
+                            className="p-2 text-slate-400 hover:text-rose-400 hover:bg-slate-900 rounded-xl transition cursor-pointer border border-transparent hover:border-rose-500/30"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ADD / EDIT USER MODAL */}
+          {showAddUserModal && (
+            <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-slate-900 border border-slate-750/90 ring-1 ring-white/10 rounded-3xl p-6 sm:p-7 max-w-lg w-full space-y-5 shadow-2xl relative animate-in zoom-in-95 duration-200">
+                {/* Header */}
+                <div className="flex items-center justify-between pb-4 border-b border-slate-800/80">
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-3 bg-gradient-to-br from-cyan-500/20 to-blue-500/10 border border-cyan-500/30 rounded-2xl text-cyan-400 shadow-inner">
+                      <UserPlus className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-white tracking-wide">
+                        {editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}
+                      </h3>
+                      <p className="text-[11px] text-slate-400 font-medium">
+                        {editingUser ? 'Modifique las credenciales y rol asignado al trabajador' : 'Asigne credenciales y perfil de rol para el trabajador'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddUserModal(false)}
+                    className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveUser} className="space-y-4 text-xs">
+                  {/* Nombre Completo */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 mb-1.5">
+                      <User className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Nombre Completo *</span>
+                    </label>
+                    <input 
+                      type="text"
+                      required
+                      placeholder="ej: Alexander Palma"
+                      value={newUser.name}
+                      onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                      className="w-full bg-slate-950/80 border border-slate-800 text-white rounded-xl px-3.5 py-2.5 text-xs placeholder:text-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition [color-scheme:dark]"
+                    />
+                  </div>
+
+                  {/* Grid: Cédula/RUC + Rol Dinámico */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 mb-1.5">
+                        <CreditCard className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Cédula o RUC *</span>
+                      </label>
+                      <input 
+                        type="text"
+                        required
+                        placeholder="1725389454"
+                        value={newUser.username}
+                        onChange={(e) => setNewUser({ ...newUser, username: e.target.value.trim() })}
+                        className="w-full bg-slate-950/80 border border-slate-800 text-white rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold placeholder:text-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition [color-scheme:dark]"
+                      />
+                      {newUser.username && (() => {
+                        const val = validateEcuadorianDocument('AUTO', newUser.username);
+                        return (
+                          <div className={`mt-1 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 border ${
+                            val.isValid 
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                              : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                          }`}>
+                            {val.isValid ? (
+                              <>
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                                <span>{val.type} Válido</span>
+                              </>
+                            ) : (
+                              <>
+                                <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                                <span>{val.message}</span>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Rol Asignado *</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingRole(null);
+                            setShowRoleModal(true);
+                          }}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-0.5 cursor-pointer transition hover:underline"
+                          title="Crear un nuevo rol personalizado con permisos a medida"
+                        >
+                          <span>+ Crear Rol</span>
+                        </button>
+                      </div>
+                      <select
+                        value={newUser.role}
+                        onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                        className="w-full bg-slate-950/80 border border-slate-800 text-white rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-cyan-500 transition [color-scheme:dark]"
+                      >
+                        <optgroup label="Roles del Sistema">
+                          {rolesList.filter((r) => r.isSystem).map((r) => (
+                            <option key={r.id} value={r.name}>
+                              {r.label || r.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                        {rolesList.some((r) => !r.isSystem) && (
+                          <optgroup label="Roles Personalizados">
+                            {rolesList.filter((r) => !r.isSystem).map((r) => (
+                              <option key={r.id} value={r.name}>
+                                {r.label || r.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Correo Electrónico */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 mb-1.5">
+                      <Mail className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Correo Electrónico *</span>
+                    </label>
+                    <input 
+                      type="email"
+                      required
+                      autoComplete="new-email"
+                      placeholder="usuario@empresa.com"
+                      value={newUser.email}
+                      onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                      className="w-full bg-slate-950/80 border border-slate-800 text-white rounded-xl px-3.5 py-2.5 text-xs font-mono placeholder:text-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition [color-scheme:dark]"
+                    />
+                  </div>
+
+                  {/* Contraseña */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 mb-1.5">
+                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Contraseña de Acceso *</span>
+                    </label>
+                    <div className="relative">
+                      <input 
+                        type={showNewUserPassword ? 'text' : 'password'}
+                        required
+                        autoComplete="new-password"
+                        placeholder="••••••••"
+                        value={newUser.password}
+                        onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                        className="w-full bg-slate-950/80 border border-slate-800 text-white rounded-xl pl-3.5 pr-10 py-2.5 text-xs font-mono placeholder:text-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition [color-scheme:dark]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewUserPassword(!showNewUserPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition p-1"
+                        title={showNewUserPassword ? "Ocultar contraseña" : "Ver contraseña"}
+                      >
+                        {showNewUserPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Botones de Acción */}
+                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800/80">
+                    <button 
+                      type="button"
+                      onClick={() => setShowAddUserModal(false)}
+                      className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700/80 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      type="submit"
+                      className="px-6 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-black rounded-xl shadow-lg shadow-cyan-500/25 transition active:scale-95 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>{editingUser ? 'Actualizar Usuario' : 'Guardar Usuario'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL DE PERMISOS GRANULARES DE TRABAJADOR */}
+          {showPermissionsModal && userForPermissions && (
+            <UserPermissionsModal
+              user={userForPermissions}
+              isOpen={showPermissionsModal}
+              onClose={() => {
+                setShowPermissionsModal(false);
+                setUserForPermissions(null);
+              }}
+              onSave={handleSavePermissions}
+              rolesList={rolesList}
+            />
+          )}
+
+          {/* MODAL DE CREAR / EDITAR ROL */}
+          {showRoleModal && (
+            <RoleModal
+              isOpen={showRoleModal}
+              onClose={() => {
+                setShowRoleModal(false);
+                setEditingRole(null);
+              }}
+              onSave={handleSaveRole}
+              editingRole={editingRole}
+              existingRoles={rolesList}
+            />
+          )}
+        </div>
+      )}
+
+
+      {/* 7. FORMATO DE IMPRESIÓN */}
+      {currentTab === 'CFG_FORMATO_IMPRESION' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-rose-500/10 text-rose-400 rounded-2xl border border-rose-500/20">
+                <Printer className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Formato de Impresión & RIDE</h2>
+                <p className="text-xs text-slate-400 font-medium">Plantillas de tickets térmicos, hojas A4 e impresión de código QR SRI</p>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <button
+                type="button"
+                onClick={() => setPrintFormat('TICKET_80MM')}
+                className={`p-4 rounded-2xl border text-left cursor-pointer transition ${
+                  printFormat === 'TICKET_80MM' ? 'bg-orange-500/10 border-orange-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                }`}
+              >
+                <div className="font-bold text-xs uppercase mb-1">Ticket Térmico 80mm</div>
+                <div className="text-[10px] text-slate-400">Impresoras POS estándar de ticket continuo</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPrintFormat('TICKET_58MM')}
+                className={`p-4 rounded-2xl border text-left cursor-pointer transition ${
+                  printFormat === 'TICKET_58MM' ? 'bg-orange-500/10 border-orange-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                }`}
+              >
+                <div className="font-bold text-xs uppercase mb-1">Ticket Térmico 58mm</div>
+                <div className="text-[10px] text-slate-400">Impresoras portátiles / Bluetooth compactas</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPrintFormat('RIDE_A4')}
+                className={`p-4 rounded-2xl border text-left cursor-pointer transition ${
+                  printFormat === 'RIDE_A4' ? 'bg-orange-500/10 border-orange-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                }`}
+              >
+                <div className="font-bold text-xs uppercase mb-1">Hoja A4 / PDF (RIDE SRI)</div>
+                <div className="text-[10px] text-slate-400">Comprobante de representación impresa SRI en PDF</div>
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">Pie de Página / Garantías en Comprobante</label>
+              <textarea
+                rows={3}
+                value={formData.footerNotes}
+                onChange={(e) => setFormData({ ...formData, footerNotes: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-xl p-3 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 flex justify-end">
+              <button
+                type="submit"
+                className="px-6 py-2.5 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-black rounded-xl text-xs transition shadow-md shadow-rose-600/20 flex items-center space-x-2 cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Guardar Plantilla de Impresión</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* 8. ADMINISTRACIÓN */}
+      {currentTab === 'CFG_ADMINISTRACION' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-amber-500/10 text-amber-400 rounded-2xl border border-amber-500/20">
+                <Sliders className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Parámetros de Administración General</h2>
+                <p className="text-xs text-slate-400 font-medium">Políticas de inventario, seguridad y validación de stock</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold text-white">Permitir Ventas con Inventario Negativo</div>
+                <div className="text-[10px] text-slate-400">Permite emitir comprobantes de productos sin stock registrado en sistema</div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setAllowNegativeStock(!allowNegativeStock)}
+                className={`p-1.5 rounded-xl border font-bold text-xs cursor-pointer ${
+                  allowNegativeStock ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-900 text-slate-500 border-slate-800'
+                }`}
+              >
+                {allowNegativeStock ? 'PERMITIDO' : 'BLOQUEADO'}
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold text-white">Alertas de Stock Mínimo en POS</div>
+                <div className="text-[10px] text-slate-400">Muestra una notificación en caja al vender artículos cerca de agotarse</div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setMinStockAlert(!minStockAlert)}
+                className={`p-1.5 rounded-xl border font-bold text-xs cursor-pointer ${
+                  minStockAlert ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-900 text-slate-500 border-slate-800'
+                }`}
+              >
+                {minStockAlert ? 'ACTIVO' : 'INACTIVO'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9. BACKUP */}
+      {currentTab === 'CFG_BACKUP' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          {/* Hidden File Input for Backup Restore */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileSelectForRestore}
+            accept=".json,application/json"
+            className="hidden"
+          />
+
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl border border-emerald-500/20">
+                <Database className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white">Base de Datos Local & Copias de Seguridad</h2>
+                <p className="text-xs text-slate-400 font-medium">Conexión directa con MongoDB Compass, exportación y restauración completa de datos</p>
+              </div>
+            </div>
+          </div>
+
+          {/* MongoDB Local (Compass) Plug-and-Play Card */}
+          <MongoConnectorCard />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Export Card */}
+            <div className="p-5 bg-slate-950 rounded-2xl border border-slate-800 space-y-4 flex flex-col justify-between">
+              <div className="space-y-2">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase">Descargar Copia de Seguridad</h3>
+                    <span className="text-[10px] text-emerald-400 font-bold">Archivo .JSON Completo</span>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed pt-1">
+                  Genera y descarga un archivo <strong className="text-slate-200">.json</strong> con toda la información del sistema: catálogo de productos, existencias, clientes, historial de comprobantes SRI, configuración y tablas contables.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={isExportingBackup}
+                onClick={handleExportBackupNow}
+                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-lg shadow-emerald-600/25 transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                {isExportingBackup ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>GENERANDO RESPALDO...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    <span>EXPORTAR Y DESCARGAR BACKUP</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Restore Card */}
+            <div className="p-5 bg-slate-950 rounded-2xl border border-slate-800 space-y-4 flex flex-col justify-between">
+              <div className="space-y-2">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-blue-500/10 text-blue-400 rounded-xl">
+                    <Upload className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-white uppercase">Restaurar Copia de Seguridad</h3>
+                    <span className="text-[10px] text-blue-400 font-bold">Importar Archivo .JSON</span>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed pt-1">
+                  Carga un archivo de respaldo generado previamente para restaurar el sistema. Se te mostrará una vista previa de los datos antes de aplicar los cambios.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-black rounded-xl transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                <span>SELECCIONAR ARCHIVO Y RESTAURAR</span>
+              </button>
+            </div>
+          </div>
+
+          {/* DANGER ZONE: CLEAN ALL MOCK DATA */}
+          <div className="p-5 bg-rose-950/20 border border-rose-800/40 rounded-2xl space-y-3">
+            <div className="flex items-center space-x-3 text-rose-400">
+              <Trash2 className="w-5 h-5" />
+              <h3 className="text-xs font-bold uppercase">Limpiar Todos los Datos de Prueba</h3>
+            </div>
+            <p className="text-xs text-slate-300">
+              Elimina permanentemente del almacenamiento todos los clientes de prueba, productos, facturas, compras, proveedores y registros para dejar el sistema listo para producción a cero.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                showConfirm(
+                  "¿Está seguro de que desea eliminar TODOS los datos de prueba del sistema? Esta acción dejará las tablas vacías.",
+                  () => {
+                    if (onClearAllData) {
+                      onClearAllData();
+                    } else {
+                      localStorage.clear();
+                      window.location.reload();
+                    }
+                  },
+                  "Limpiar Base de Datos",
+                  "Sí, Eliminar Todo",
+                  "Cancelar"
+                );
+              }}
+              className="px-5 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-rose-600/30 flex items-center space-x-2 cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>ELIMINAR TODOS LOS DATOS DE PRUEBA (RESTABLECER SISTEMA)</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: CONFIRMACIÓN DE RESTAURACIÓN DE BACKUP ── */}
+      {showRestoreModal && pendingBackupData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-lg p-6 sm:p-7 shadow-2xl space-y-5 animate-scaleUp text-white">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-2xl">
+                  <Upload className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Confirmar Restauración</h3>
+                  <p className="text-xs text-slate-400">Verifique los datos del respaldo antes de continuar</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isRestoringBackup) {
+                    setShowRestoreModal(false);
+                    setPendingBackupData(null);
+                  }
+                }}
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 space-y-2">
+                <div className="flex justify-between text-slate-300 font-medium">
+                  <span>Origen del Respaldo:</span>
+                  <strong className="text-white">{pendingBackupData.metadata.storeName}</strong>
+                </div>
+                <div className="flex justify-between text-slate-300 font-medium">
+                  <span>RUC / Identificación:</span>
+                  <strong className="text-white font-mono">{pendingBackupData.metadata.taxId}</strong>
+                </div>
+                <div className="flex justify-between text-slate-300 font-medium">
+                  <span>Fecha de Creación:</span>
+                  <strong className="text-white font-mono">
+                    {new Date(pendingBackupData.metadata.exportedAt).toLocaleString('es-EC')}
+                  </strong>
+                </div>
+                <div className="flex justify-between text-slate-300 font-medium">
+                  <span>Versión del Sistema:</span>
+                  <strong className="text-emerald-400">v{pendingBackupData.metadata.version}</strong>
+                </div>
+              </div>
+
+              {/* Conteo de registros */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-center">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Productos</div>
+                  <div className="text-lg font-black text-white font-mono">
+                    {pendingBackupData.metadata.summary.products}
+                  </div>
+                </div>
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-center">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Clientes</div>
+                  <div className="text-lg font-black text-white font-mono">
+                    {pendingBackupData.metadata.summary.customers}
+                  </div>
+                </div>
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-center">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Facturas</div>
+                  <div className="text-lg font-black text-white font-mono">
+                    {pendingBackupData.metadata.summary.invoices}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-amber-300 flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 shrink-0 text-amber-400 mt-0.5" />
+                <p className="text-[11px] leading-relaxed">
+                  <strong>Atención:</strong> La restauración sobreescribirá la base de datos actual con la información contenida en este archivo de respaldo.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={isRestoringBackup}
+                onClick={() => {
+                  setShowRestoreModal(false);
+                  setPendingBackupData(null);
+                }}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isRestoringBackup}
+                onClick={handleExecuteRestore}
+                className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-lg shadow-blue-600/30 transition cursor-pointer flex items-center gap-2"
+              >
+                {isRestoringBackup ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Restaurando Base de Datos...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Confirmar y Restaurar Datos</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

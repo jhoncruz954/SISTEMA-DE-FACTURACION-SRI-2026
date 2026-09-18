@@ -1,0 +1,417 @@
+export type UnitOfMeasure = string;
+
+export type Category = string;
+
+export interface ProductCategory {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+}
+
+export interface TaxRateItem {
+  id: string;
+  name: string;
+  rate: number; // porcentaje ej: 15, 5, 0, 13
+  codeSri?: string; // Código SRI e.g. "4", "5", "0", "6", "7", "2", "10"
+  isDefault?: boolean;
+  active: boolean;
+  description?: string;
+}
+
+export interface Product {
+  id: string;
+  sku: string;
+  barcode: string;
+  name: string;
+  category: Category;
+  description?: string;
+  unit: UnitOfMeasure;
+  price: number; // Precio de venta sin o con IVA segun config
+  costPrice: number; // Precio de costo
+  stock: number;
+  minStock: number;
+  location?: string; // Pasillo / Estante ej: "Pasillo 3 - Estante B"
+  taxRate: number; // p.ej 15 para 15%
+  allowFractional: boolean; // Si permite decimales (ej: 2.5 metros o 0.5 kg)
+  priceScales?: PriceScale[]; // Escalas de precios por cantidad
+  isCustom?: boolean;
+}
+
+export interface PriceScale {
+  id: string;
+  name: string;
+  minQty: number;
+  maxQty?: number;
+  price: number;
+  priceWithTax?: number | string;
+}
+
+export interface CartItem {
+  product: Product;
+  quantity: number; // puede ser decimal si allowFractional es true
+  unitPrice: number; // precio unitario aplicado
+  discountPercent: number; // descuento %
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+  appliedPromo?: string; // nombre/código de la promo aplicada automáticamente
+}
+
+export interface PromotionItem {
+  productId: string;
+  productName: string;
+  sku?: string;
+  barcode?: string;
+  stock?: number;
+  taxRate?: number;
+  unit?: string;
+  currentPrice: number;
+  currentPriceWithTax?: number;
+  discountPercent: number;
+  discountAmount: number;
+  discountAmountWithTax?: number;
+  finalPrice: number;
+  finalPriceWithTax?: number;
+}
+
+export interface Promotion {
+  id: string;
+  code: string;
+  name: string;
+  discountPercent: number;
+  startDate: string;
+  endDate: string;
+  status: 'ACTIVA' | 'PROGRAMADA' | 'EXPIRADA';
+  minQuantity: number;
+  appliedCategory: string; // nombre de la categoría a la que aplica
+  productId?: string; // ID de producto específico (opcional)
+  productName?: string; // Nombre del producto específico (opcional)
+  items?: PromotionItem[]; // Lista de productos incluidos con descuentos específicos
+}
+
+
+export interface Customer {
+  id: string;
+  docType: 'C.I.' | 'RUC' | 'Pasaporte' | string;
+  docNumber: string;
+  name: string; // Nombre o Razon Social
+  email?: string;
+  phone?: string;
+  country?: string;
+  province?: string;
+  city?: string;
+  address?: string;
+  creditLimit: number;
+  currentBalance: number; // Deuda actual acumulada
+  idNumber?: string; // Compatibilidad SRI / alias de docNumber
+  idType?: string;   // Compatibilidad SRI / alias de docType
+}
+
+export type DocumentType = 'FACTURA' | 'BOLETA' | 'COTIZACION';
+export type PaymentMethod = 'EFECTIVO' | 'TARJETA_DEBITO' | 'TARJETA_CREDITO' | 'TRANSFERENCIA' | 'CREDITO_CLIENTE' | 'COMPENSACION' | 'ENDOSO' | 'CHEQUE' | string;
+export type InvoiceStatus = 'PAGADA' | 'PENDIENTE' | 'ANULADA';
+
+export interface PaymentMethodItem {
+  id: string;
+  code: string;
+  name: string;
+  shortName?: string;
+  methodKey?: string;
+  active: boolean;
+  default?: boolean;
+}
+
+export interface InvoiceItem {
+  productId: string;
+  sku: string;
+  productName: string;
+  description?: string;
+  unit: UnitOfMeasure;
+  quantity: number;
+  unitPrice: number;
+  costPrice?: number;
+  discountPercent: number;
+  subtotal: number;
+  taxRate?: number; // e.g. 15, 5, 0
+  taxAmount: number;
+  total: number;
+}
+
+export interface Invoice {
+  id: string;
+  documentType: DocumentType;
+  series: string; // ej: F001
+  number: number; // ej: 124 -> F001-00000124
+  fullNumber: string; // F001-00000124
+  createdAt: string; // ISO String
+  customer: Customer;
+  items: InvoiceItem[];
+  subtotal: number;
+  discountTotal: number;
+  taxTotal: number;
+  total: number;
+  paymentMethod: PaymentMethod;
+  paymentStatus: InvoiceStatus;
+  amountTendered?: number; // Monto entregado (si fue efectivo)
+  changeGiven?: number; // Vuelto / Cambio entregado
+  paymentReference?: string; // Número de comprobante o referencia de transferencia / tarjeta
+  notes?: string;
+  sellerName: string;
+  orderId?: string; // ID / Número de pedido de origen si fue facturado desde un pedido
+  // SRI Ecuador Electronic Invoicing fields
+  sriStatus?: 'PENDIENTE' | 'FIRMADO' | 'ENVIADO' | 'AUTORIZADO' | 'NO AUTORIZADO' | 'DEVUELTA' | 'ERROR' | 'ANULADO';
+  sriClaveAcceso?: string;
+  sriNumeroAutorizacion?: string;
+  sriFechaAutorizacion?: string;
+  sriXmlFirmado?: string;
+  sriMensaje?: string;
+  creditNoteRef?: string;
+  cancelledAt?: string;
+  cancellationReason?: string;
+}
+
+export interface CashRegisterSession {
+  id: string;
+  openedAt: string;
+  closedAt?: string;
+  initialCash: number;
+  expectedCash: number;
+  actualCash?: number;
+  difference?: number;
+  status: 'ABIERTA' | 'CERRADA';
+  totalSalesCash: number;
+  totalSalesCard: number;
+  totalSalesTransfer: number;
+  totalSalesCredit: number;
+  totalInvoicesCount: number;
+}
+
+export interface StoreSettings {
+  storeName: string;
+  legalName: string;
+  taxId: string; // RUC / RFC / NIT
+  address: string;
+  phone: string;
+  email: string;
+  logoUrl?: string;
+  currencySymbol: string;
+  currencyCode: string;
+  defaultTaxRate: number; // ej: 15%
+  invoicePrefix: string; // ej: F001
+  ticketPrefix: string; // ej: B001
+  quotePrefix: string; // ej: COT
+  nextInvoiceNumber: number;
+  nextTicketNumber: number;
+  nextQuoteNumber: number;
+  footerNotes: string; // "¡Gracias por su compra! Garantía de 30 días con su comprobante."
+  accountingRequired?: boolean;
+  rimpe?: string;
+  country?: string;
+  province?: string;
+  city?: string;
+  specialTaxpayerNumber?: string;
+  isMicroenterprise?: boolean;
+  isRimpe?: boolean;
+  rimpeType?: string;
+  isRetentionAgent?: boolean;
+  retentionAgentResolution?: string;
+}
+
+export type SalesSubTab = 
+  | 'CAJA'
+  | 'FACTURAS'
+  | 'PEDIDOS'
+  | 'GUIA_REMISION'
+  | 'COTIZACIONES'
+  | 'DEVOLUCIONES'
+  | 'NOTA_CREDITO'
+  | 'COMPROBANTES_ELECTRONICOS'
+  | 'RETENCION'
+  | 'RECETAS_MEDICAS'
+  | 'COMISIONES_METAS'
+  | 'HISTORIAL_FACTURAS'
+  | 'HISTORIAL_COTIZACIONES';
+
+export type CustomersSubTab = 
+  | 'CLIENTES'
+  | 'CUENTAS_POR_COBRAR';
+
+export type InventorySubTab =
+  | 'INVENTORY'
+  | 'INVENTARIO'
+  | 'CATEGORIAS'
+  | 'PROMOCIONES'
+  | 'UNIDADES_MEDIDAS'
+  | 'LOTES_VENCIMIENTOS'
+  | 'CAMBIO_PRECIO_MASIVO'
+  | 'AJUSTE_STOCK'
+  | 'TRANSFERENCIAS'
+  | 'ETIQUETAS'
+  | 'KARDEX'
+  | 'TOMA_FISICA';
+
+export type PurchasesSubTab =
+  | 'COMPRAS'
+  | 'HISTORIAL_COMPRAS'
+  | 'ORDENES_COMPRA'
+  | 'PRE_ORDENES';
+
+export interface PreOrderItem {
+  productId: string;
+  sku: string;
+  productName: string;
+  currentStock: number;
+  minStock: number;
+  quantity: number;
+  costPrice: number;
+  taxPercent: number;
+  subtotal: number;
+  total: number;
+}
+
+export interface PreOrder {
+  id: string;
+  preOrderNumber: string;
+  supplierId?: string;
+  supplierName?: string;
+  createdAt: string;
+  expectedDate?: string;
+  priority: 'ALTA' | 'MEDIA' | 'BAJA';
+  status: 'PENDIENTE' | 'COTIZADA' | 'CONVERTIDA_A_ORDEN' | 'CANCELADA';
+  items: PreOrderItem[];
+  totalEstimatedCost: number;
+  totalItemsCount: number;
+  notes?: string;
+}
+
+export interface CreditNoteData {
+  id: string; // Secuencial: 001-001-000000001
+  invoiceRef: string; // Número de factura afectada: F001-000000124
+  invoiceId?: string;
+  invoiceDate?: string;
+  customer: string;
+  customerRuc?: string;
+  customerAddress?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  reason: string;
+  amount: number;
+  subtotal?: number;
+  tax?: number;
+  date: string;
+  status: string;
+  establishment?: string;
+  emissionPoint?: string;
+  secNumber?: string;
+  claveAcceso?: string;
+  numeroAutorizacion?: string;
+  fechaAutorizacion?: string;
+  items?: InvoiceItem[];
+}
+
+export type SuppliersSubTab =
+  | 'PROVEEDORES'
+  | 'CUENTAS_POR_PAGAR';
+
+export type FinanceSubTab =
+  | 'BANCOS'
+  | 'DEPOSITOS'
+  | 'CAJA_CHICA'
+  | 'ACTIVOS_FIJOS'
+  | 'PRESUPUESTO';
+
+export type AccountingSubTab =
+  | 'CONTABILIDAD_RESUMEN'
+  | 'CHEQUES_GIRADOS'
+  | 'CONCILIACION_TARJETAS'
+  | 'CONCILIACION_BANCARIA'
+  | 'COMPROBANTE_INGRESO'
+  | 'COMPROBANTE_EGRESO'
+  | 'ASIENTOS'
+  | 'MAYORES'
+  | 'BALANCE_COMPROBACION'
+  | 'ESTADO_SITUACION_FINANCIERA'
+  | 'ESTADO_RESULTADO'
+  | 'ATS'
+  | 'PLAN_CUENTAS'
+  | 'PARAMETRIZACION'
+  | 'PERIODOS_FISCALES'
+  | 'FORMULARIOS_DIMM'
+  | 'CHEQUES_POSFECHADOS';
+
+export type AssetsSubTab =
+  | 'ACTIVOS_LISTA'
+  | 'DEPRECIACIONES'
+  | 'MANTENIMIENTOS'
+  | 'TRANSFERENCIAS_ACTIVOS'
+  | 'HISTORICOS_ACTIVOS'
+  | 'AREAS_ACTIVOS'
+  | 'CLASIFICACIONES_ACTIVOS'
+  | 'UBICACIONES_ACTIVOS';
+
+export type HRSubTab =
+  | 'ROLES_PAGO'
+  | 'OTROS_INGRESOS'
+  | 'DESCUENTOS'
+  | 'VACACIONES'
+  | 'LIQUIDACIONES'
+  | 'DECIMOS'
+  | 'DEPARTAMENTOS_RRHH'
+  | 'CARGOS_RRHH'
+  | 'EMPLEADOS'
+  | 'NOVEDADES_RRHH';
+
+export type ReportsSubTab =
+  | 'REP_VENTAS'
+  | 'REP_PRODUCTOS'
+  | 'REP_INVENTARIO'
+  | 'REP_CAJA'
+  | 'REP_COMPRAS'
+  | 'REP_COMISIONES'
+  | 'REP_ATS'
+  | 'REP_FORMULARIO_104'
+  | 'REP_FORMULARIO_103'
+  | 'REP_RENTABILIDAD'
+  | 'REP_STOCK_MUERTO'
+  | 'REP_NOMINA'
+  | 'REP_DEVOLUCIONES'
+  | 'REP_ROTACION'
+  | 'REP_FLUJO_CAJA';
+
+export type SettingsSubTab =
+  | 'CFG_EMPRESA'
+  | 'CFG_FIRMA_ELECTRONICA'
+  | 'CFG_PUNTO_EMISION'
+  | 'CFG_IMPUESTOS'
+  | 'CFG_CAJA'
+  | 'CFG_FORMAS_PAGO'
+  | 'CFG_USUARIOS'
+  | 'CFG_FORMATO_IMPRESION'
+  | 'CFG_ADMINISTRACION'
+  | 'CFG_BACKUP';
+
+export type TabType = SalesSubTab | CustomersSubTab | InventorySubTab | PurchasesSubTab | SuppliersSubTab | FinanceSubTab | AccountingSubTab | AssetsSubTab | HRSubTab | ReportsSubTab | SettingsSubTab | 'CASH_REGISTER' | 'SETTINGS';
+
+
+export interface UnitDefinition {
+  id: string;
+  code: string;
+  name: string;
+  symbol: string;
+  baseRatio: number;
+  category: string;
+  fractional?: boolean;
+}
+
+export interface SystemUser {
+  id: string;
+  name: string;
+  email: string;
+  username: string; // Cédula o RUC
+  role: 'Administrador' | 'Cajero' | 'Vendedor' | 'Contador' | 'Bodeguero' | 'Personalizado' | string;
+  status: 'Activo' | 'Inactivo';
+  password?: string;
+  permissions?: Record<string, boolean>;
+}
+

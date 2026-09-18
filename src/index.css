@@ -1,0 +1,419 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  code, kbd, samp, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom Smooth Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.05);
+  border-radius: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(203, 213, 225, 0.8);
+  border-radius: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(249, 115, 22, 0.8);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Print styling adjustments */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  body, html {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide all app chrome, navigation, headers, sidebars, buttons, toolbars, search inputs and toasts */
+  header,
+  aside,
+  nav,
+  footer,
+  button,
+  input,
+  select,
+  textarea,
+  .no-print,
+  .print\:hidden,
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* When printing any modal document, isolate printable content and hide screen app root */
+  body:has(#printable-invoice, #printable-order-voucher, #printable-report-document, #printable-kardex, #printable-labels, #printable-statement, #printable-payroll-role, #printable-preorder, #printable-cash-close, .printable-document) #root:not(:has(#printable-invoice, #printable-order-voucher, #printable-report-document, #printable-kardex, #printable-labels, #printable-statement, #printable-payroll-role, #printable-preorder, #printable-cash-close, .printable-document)),
+  body:has(#printable-invoice, #printable-order-voucher, #printable-report-document, #printable-kardex, #printable-labels, #printable-statement, #printable-payroll-role, #printable-preorder, #printable-cash-close, .printable-document) main:not(:has(#printable-invoice, #printable-order-voucher, #printable-report-document, #printable-kardex, #printable-labels, #printable-statement, #printable-payroll-role, #printable-preorder, #printable-cash-close, .printable-document)) {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    background: transparent !important;
+  }
+
+  /* Flatten modal containers so only the printable document is displayed cleanly */
+  .fixed.inset-0 {
+    position: static !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+
+  .fixed.inset-0 > div {
+    max-width: 100% !important;
+    width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    border-radius: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Expand scrollable containers cleanly on paper */
+  .custom-scrollbar,
+  .overflow-y-auto,
+  .overflow-x-auto {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    background: transparent !important;
+    padding: 0 !important;
+  }
+
+  /* Printable Documents Styling */
+  #printable-invoice,
+  #printable-order-voucher,
+  #printable-report-document,
+  #printable-kardex,
+  #printable-statement,
+  #printable-payroll-role,
+  #printable-preorder,
+  #printable-cash-close,
+  .printable-document {
+    position: static !important;
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 5mm !important;
+    margin: 0 auto !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  #printable-invoice {
+    padding: 0 !important;
+    margin: 0 auto !important;
+  }
+
+  #printable-invoice.ride-a4 {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  #printable-invoice.ticket-80mm {
+    width: 76mm !important;
+    max-width: 76mm !important;
+    min-width: 76mm !important;
+    margin: 0 auto !important;
+    padding: 2mm 1mm !important;
+    box-sizing: border-box !important;
+  }
+
+  #printable-invoice .grid {
+    display: grid !important;
+  }
+
+  /* Dedicated Cash Close Print Voucher Styling */
+  #printable-cash-close {
+    padding: 8mm !important;
+    max-width: 800px !important;
+    margin: 0 auto !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11px !important;
+  }
+
+  #printable-cash-close * {
+    color: #000000 !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  /* Barcode Labels Specific Grid */
+  #printable-labels {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    background: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+    min-height: auto !important;
+  }
+
+  #printable-labels .labels-grid,
+  #printable-labels > div {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 3mm !important;
+    justify-content: flex-start !important;
+    align-items: flex-start !important;
+    width: 100% !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .printable-label-item {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    box-shadow: none !important;
+    display: flex !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Table styling in print */
+  table {
+    page-break-inside: auto;
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tfoot {
+    display: table-footer-group;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    page-break-after: avoid;
+  }
+}
+
+/* Keyframe animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Industrial Card Glass & Glow Effects */
+.card-industrial {
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.03), 0 1px 2px -1px rgba(15, 23, 42, 0.03);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.card-industrial:hover {
+  border-color: rgba(249, 115, 22, 0.4);
+  box-shadow: 0 4px 12px -2px rgba(249, 115, 22, 0.12), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+}
+
+/* Custom Styled Select & Option Elements */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f97316' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.75rem center !important;
+  background-size: 1rem !important;
+  padding-right: 2.25rem !important;
+  border-radius: 0.75rem !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+select option {
+  background-color: #020617 !important; /* slate-950 dark */
+  color: #f8fafc !important; /* slate-50 */
+  padding: 10px 14px !important;
+  font-weight: 800 !important;
+}
+
+select option:hover,
+select option:focus,
+select option:active,
+select option:checked {
+  background: linear-gradient(135deg, #f97316, #d97706) !important;
+  color: #ffffff !important;
+}
+
+
+/* Hide number input arrows */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Custom styles for react-datepicker */
+.react-datepicker-wrapper {
+  display: block;
+  width: 100%;
+}
+.react-datepicker {
+  font-family: inherit !important;
+  border: 1px solid rgba(226, 232, 240, 0.9) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.1), 0 4px 6px -4px rgba(15, 23, 42, 0.05) !important;
+  overflow: hidden;
+}
+.react-datepicker__header {
+  background-color: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  padding-top: 12px !important;
+}
+.react-datepicker__current-month {
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  font-size: 0.9rem !important;
+}
+.react-datepicker__day-name {
+  color: #64748b !important;
+  font-weight: 700 !important;
+  font-size: 0.75rem !important;
+}
+.react-datepicker__day {
+  color: #334155 !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
+}
+.react-datepicker__day:hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected {
+  background-color: #f97316 !important;
+  color: white !important;
+  font-weight: 800 !important;
+}
+.react-datepicker__day--keyboard-selected {
+  background-color: #fb923c !important;
+}
+.react-datepicker__navigation-icon::before {
+  border-color: #64748b !important;
+}
+.react-datepicker__navigation:hover .react-datepicker__navigation-icon::before {
+  border-color: #0f172a !important;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-slideUp {
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Chrome / Safari / Edge Dark Autofill Fix */
+.bg-slate-900 input:-webkit-autofill,
+.bg-slate-950 input:-webkit-autofill,
+input[type="text"]:-webkit-autofill,
+input[type="email"]:-webkit-autofill,
+input[type="password"]:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px #020617 inset !important;
+  -webkit-text-fill-color: #f8fafc !important;
+  caret-color: #f8fafc !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Global Date Picker & Accent Styling */
+input[type="date"] {
+  accent-color: #f97316;
+  color-scheme: light;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s, transform 0.2s;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+/* ============================================================
+   FIX: Inputs con fondo claro siempre muestran texto oscuro.
+   Algunos browsers heredan color blanco de ancestros con
+   text-white. Esta regla garantiza visibilidad en formularios.
+   ============================================================ */
+input:not([class*="text-white"]):not([class*="bg-slate-800"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]):not([class*="bg-dark"]) {
+  color: #1e293b; /* slate-800 — texto oscuro por defecto en inputs */
+}
+
+/* Placeholder siempre visible y sutil */
+input::placeholder {
+  color: #94a3b8 !important; /* slate-400 */
+  opacity: 1;
+}
